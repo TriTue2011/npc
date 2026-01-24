@@ -1,12 +1,12 @@
 {
     "domain": "npc",
     "name": "EVN VN",
+    "after_dependencies": ["http"],
     "codeowners": [
         "@smarthomeblack"
     ],
     "config_flow": true,
     "dependencies": [],
-    "after_dependencies": ["http"],
     "documentation": "https://github.com/smarthomeblack/npc/",
     "iot_class": "local_push",
     "issue_tracker": "https://github.com/smarthomeblack/npc/issues",
