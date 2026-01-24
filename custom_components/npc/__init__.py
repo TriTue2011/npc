@@ -74,11 +74,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             frontend.async_register_built_in_panel(
                 hass,
-                "iframe",
-                "EVN Monitor",
-                "mdi:lightning-bolt",
-                "npc_monitor",
-                {"url": "/npc-monitor/index.html"},
+                component_name="iframe",
+                sidebar_title="EVN Monitor",
+                sidebar_icon="mdi:lightning-bolt",
+                frontend_url_path="npc_monitor",
+                config={"url": "/npc-monitor/index.html"},
                 require_admin=False,
             )
             hass.data.setdefault(DOMAIN, {})["panel_registered"] = True
