@@ -9,7 +9,31 @@
         "data_description": {
           "phuong_thuc": "Choose how to add EVN customer code"
         },
-        "description": "{method_info}"
+        "description": "### 🔌 Setup EVN VN\n\nSelect your electricity region:\n- **HN**: Hanoi\n- **NPC**: Northern Region\n- **CPC**: Central Region\n- **SPC**: Southern Region"
+      },
+      "credentials": {
+        "title": "🔐 Login Information",
+        "data": {
+          "username": "👤 Username",
+          "password": "🔒 Password"
+        },
+        "data_description": {
+          "username": "Enter username to login to EVN system",
+          "password": "Enter password to login to EVN system"
+        },
+        "description": "### 🔐 Login Information\n\nEnter username and password to login to EVN system."
+      },
+      "customer_id": {
+        "title": "📋 Account Information",
+        "data": {
+          "customer_id": "🆔 Customer ID",
+          "ngaydauky": "📅 Billing Start Day"
+        },
+        "data_description": {
+          "customer_id": "Enter EVN customer ID (must start with P or S, minimum 11 characters)",
+          "ngaydauky": "Select billing cycle start day (usually day 1-28)"
+        },
+        "description": "### 📋 Account Information\n\nEnter customer ID and billing cycle start day."
       },      "auto": {
         "title": "🤖 Automatic Setup",
         "data": {
@@ -63,7 +87,11 @@
     },
     "error": {
       "invalid_evn_code": "❌ Invalid customer code!\n\n✅ Correct format:\n• Must start with P or S\n• Must have at least 11 characters\n• Example: PE06800012345",
-      "customer_not_found": "🔍 Customer code not found!\n\n❗ Possible reasons:\n• Incorrect customer code entered\n• EVN VN Addon error\n• EVN VN Addon still fetching data\n\n💬 Please check again or contact admin"
+      "customer_not_found": "🔍 Customer code not found!\n\n❗ Possible reasons:\n• Incorrect customer code entered\n• EVN VN Addon error\n• EVN VN Addon still fetching data\n\n💬 Please check again or contact admin",
+      "invalid_format": "❌ Invalid customer code format!\n\n✅ Correct format:\n• Must start with P or S\n• Must have at least 11 characters\n• Example: PE06800012345",
+      "invalid_auth": "❌ Login failed!\n\n❗ Please check:\n• Username\n• Password\n• Network connection",
+      "no_data": "⚠️ Could not retrieve data!\n\n❗ Possible reasons:\n• Incorrect customer ID\n• No data available in system\n• API connection error",
+      "unknown": "❌ An unknown error occurred!\n\n💬 Please try again or check logs for details"
     }
   },
   "options": {

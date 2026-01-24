@@ -1,24 +1,22 @@
 from homeassistant.components.sensor import SensorEntity
-from homeassistant.const import CONF_USERNAME, STATE_UNKNOWN
+from homeassistant.const import STATE_UNKNOWN
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 from calendar import monthrange
 from datetime import timedelta, datetime
 import logging
-from .const import DOMAIN
+from .const import DOMAIN, CONF_CUSTOMER_ID, CONF_NGAYDAUKY
 from .utils import tinhngaydauky, laychisongay, laydientieuthungay, \
     laydientieuthuthang, laykhoangtieuthukynay, tinhtiendien, \
     layhoadon, set_lancapnhapcuoi, get_lancapnhapcuoi, \
     laylichcatdien, laychisongaygannhat
-from .config_flow import CONF_NGAYDAUKY
-
-# Thời gian scan file DB
-SCAN_INTERVAL = timedelta(minutes=10)
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
-    userevn = config_entry.data[CONF_USERNAME]
+    """Set up EVN VN sensors from a config entry."""
+    customer_id = config_entry.data[CONF_CUSTOMER_ID]
     ngaydauky = None
     if config_entry.options and CONF_NGAYDAUKY in config_entry.options:
         ngaydauky = int(config_entry.options[CONF_NGAYDAUKY])
@@ -26,6 +24,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     else:
         ngaydauky = int(config_entry.data.get(CONF_NGAYDAUKY, 1))
         _LOGGER.info(f"Setting up EVN VN sensors with ngaydauky={ngaydauky} from data")
+
+    # Get coordinator from hass.data
+    coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
 
     SENSOR_TYPES = [
         "chi_so_cuoi_ky", "chi_so_tam_chot",
@@ -38,10 +39,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     ]
     entities = []
     for sensor_type in SENSOR_TYPES:
-        unique_id = f"{userevn}_{sensor_type}"
+        unique_id = f"{customer_id}_{sensor_type}"
         unit = None
-        entities.append(EVNSensor(hass, userevn, sensor_type, unique_id, unit, ngaydauky))
-        _LOGGER.debug(f"Adding {len(entities)} sensors for {userevn}")
+        entities.append(EVNSensor(coordinator, customer_id, sensor_type, unique_id, unit, ngaydauky))
+        _LOGGER.debug(f"Adding {len(entities)} sensors for {customer_id}")
     async_add_entities(entities)
     return True
 
@@ -66,10 +67,14 @@ VIETNAMESE_NAMES = {
 }
 
 
-class EVNSensor(SensorEntity):
-    def __init__(self, hass, userevn, sensor_type, unique_id, unit=None, ngaydauky=1):
-        self._hass = hass
-        self._userevn = userevn
+class EVNSensor(CoordinatorEntity, SensorEntity):
+    """EVN VN Sensor Entity using Coordinator."""
+
+    def __init__(self, coordinator, customer_id, sensor_type, unique_id, unit=None, ngaydauky=1):
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._userevn = customer_id  # Keep _userevn for backward compatibility with utils
+        self._customer_id = customer_id
         self._sensor_type = sensor_type
         self._unique_id = unique_id
         self._unit = unit
@@ -79,6 +84,7 @@ class EVNSensor(SensorEntity):
 
     async def async_added_to_hass(self):
         """Run when entity is added to hass."""
+        await super().async_added_to_hass()
         _LOGGER.debug(f"Added {self._sensor_type} sensor to hass for {self._userevn}")
 
     @property
@@ -95,7 +101,7 @@ class EVNSensor(SensorEntity):
     @property
     def state(self):
         # Cập nhật thời gian mỗi lần bất kỳ cảm biến nào được truy cập
-        set_lancapnhapcuoi(self._hass, self._userevn)
+        set_lancapnhapcuoi(self.coordinator.hass, self._userevn)
         today = dt_util.now().date()
 
         def format_kwh(value):
@@ -159,8 +165,8 @@ class EVNSensor(SensorEntity):
             tam_chot_entity_id = f"sensor.{self._userevn}_chi_so_tam_chot"
             cuoi_ky_entity_id = f"sensor.{self._userevn}_chi_so_cuoi_ky"
             # Lấy trạng thái của các cảm biến
-            tam_chot_state = self.hass.states.get(tam_chot_entity_id)
-            cuoi_ky_state = self.hass.states.get(cuoi_ky_entity_id)
+            tam_chot_state = self.coordinator.hass.states.get(tam_chot_entity_id)
+            cuoi_ky_state = self.coordinator.hass.states.get(cuoi_ky_entity_id)
             # Cố gắng lấy giá trị từ cảm biến
             if tam_chot_state is not None and cuoi_ky_state is not None:
                 try:
@@ -174,9 +180,10 @@ class EVNSensor(SensorEntity):
                             "Chỉ số tạm chốt": chi_so_tam_chot,
                             "Chỉ số cuối kỳ trước": chi_so_cuoi_ky
                         }
-                        # Thêm ngày bắt đầu và kết thúc nếu có trong thuộc tính của cảm biến khác
-                        if cuoi_ky_state.attributes.get("Ngày"):
-                            self._attributes["Ngày bắt đầu"] = cuoi_ky_state.attributes.get("Ngày")
+                        # Thêm ngày bắt đầu và kết thúc
+                        # Ngày bắt đầu kỳ này = ngày sau ngày cuối kỳ trước
+                        start_ky, _, _, _ = tinhngaydauky(self._ngaydauky, today)
+                        self._attributes["Ngày bắt đầu"] = start_ky.strftime("%d-%m-%Y")
                         if tam_chot_state.attributes.get("Ngày"):
                             self._attributes["Ngày kết thúc"] = tam_chot_state.attributes.get("Ngày")
                         return format_kwh(tieu_thu)
@@ -191,8 +198,8 @@ class EVNSensor(SensorEntity):
             chi_so_tam_chot, ngay_tam_chot = laychisongaygannhat(
                 self._userevn, today.strftime("%Y-%m-%d"), reverse=True
             )
-            # Tính ngày cuối kỳ trước
-            _, _, _, prev_end_ky = tinhngaydauky(self._ngaydauky, today)
+            # Tính ngày cuối kỳ trước và ngày bắt đầu kỳ này
+            start_ky, _, _, prev_end_ky = tinhngaydauky(self._ngaydauky, today)
             # Lấy chỉ số cuối kỳ trước
             chi_so_cuoi_ky = laychisongay(self._userevn, prev_end_ky.strftime("%Y-%m-%d"))
             # Nếu không có chỉ số cuối kỳ trước, tìm chỉ số gần nhất sau ngày đó
@@ -204,6 +211,8 @@ class EVNSensor(SensorEntity):
                 )
             else:
                 ngay_cuoi_ky = prev_end_ky.strftime("%d-%m-%Y")
+            # Ngày bắt đầu kỳ này = ngày sau ngày cuối kỳ trước
+            ngay_bat_dau_ky = start_ky.strftime("%d-%m-%Y")
             # Nếu có đủ dữ liệu, tính tiêu thụ
             if chi_so_tam_chot is not None and chi_so_cuoi_ky is not None:
                 if chi_so_tam_chot > 0 and chi_so_cuoi_ky > 0 and chi_so_tam_chot > chi_so_cuoi_ky:
@@ -212,7 +221,7 @@ class EVNSensor(SensorEntity):
                     self._attributes = {
                         "Chỉ số tạm chốt": chi_so_tam_chot,
                         "Chỉ số cuối kỳ trước": chi_so_cuoi_ky,
-                        "Ngày bắt đầu": ngay_cuoi_ky,
+                        "Ngày bắt đầu": ngay_bat_dau_ky,
                         "Ngày kết thúc": ngay_tam_chot
                     }
                     return format_kwh(tieu_thu)
@@ -224,7 +233,7 @@ class EVNSensor(SensorEntity):
         if self._sensor_type == "tien_dien_ky_nay":
             # Lấy giá trị từ cảm biến tiêu thụ kỳ này
             tieu_thu_entity_id = f"sensor.{self._userevn}_tieu_thu_ky_nay"
-            tieu_thu_state = self.hass.states.get(tieu_thu_entity_id)
+            tieu_thu_state = self.coordinator.hass.states.get(tieu_thu_entity_id)
             if tieu_thu_state is not None and tieu_thu_state.state not in ('unknown', 'unavailable', '0', '0.0'):
                 try:
                     tieu_thu = float(tieu_thu_state.state)
@@ -247,7 +256,8 @@ class EVNSensor(SensorEntity):
             chi_so_tam_chot, ngay_tam_chot = laychisongaygannhat(
                 self._userevn, today.strftime("%Y-%m-%d"), reverse=True
             )
-            _, _, _, prev_end_ky = tinhngaydauky(self._ngaydauky, today)
+            # Tính ngày cuối kỳ trước và ngày bắt đầu kỳ này
+            start_ky, _, _, prev_end_ky = tinhngaydauky(self._ngaydauky, today)
             chi_so_cuoi_ky = laychisongay(self._userevn, prev_end_ky.strftime("%Y-%m-%d"))
             if chi_so_cuoi_ky is None or chi_so_cuoi_ky <= 0:
                 chi_so_cuoi_ky, ngay_cuoi_ky = laychisongaygannhat(
@@ -257,6 +267,8 @@ class EVNSensor(SensorEntity):
                 )
             else:
                 ngay_cuoi_ky = prev_end_ky.strftime("%d-%m-%Y")
+            # Ngày bắt đầu kỳ này = ngày sau ngày cuối kỳ trước
+            ngay_bat_dau_ky = start_ky.strftime("%d-%m-%Y")
             if chi_so_tam_chot is not None and chi_so_cuoi_ky is not None:
                 if chi_so_tam_chot > 0 and chi_so_cuoi_ky > 0 and chi_so_tam_chot > chi_so_cuoi_ky:
                     tieu_thu = chi_so_tam_chot - chi_so_cuoi_ky
@@ -266,7 +278,7 @@ class EVNSensor(SensorEntity):
                         "Chi tiết": chi_tiet,
                         "Chỉ số tạm chốt": chi_so_tam_chot,
                         "Chỉ số cuối kỳ trước": chi_so_cuoi_ky,
-                        "Ngày bắt đầu": ngay_cuoi_ky,
+                        "Ngày bắt đầu": ngay_bat_dau_ky,
                         "Ngày kết thúc": ngay_tam_chot
                     }
                     return int(round(tongtien, 0)) if tongtien is not None else 0
@@ -377,20 +389,57 @@ class EVNSensor(SensorEntity):
             return format_kwh(san_luong)
         # Tiêu thụ kỳ trước nữa
         if self._sensor_type == "tieu_thu_ky_truoc_nua":
-            if self._ngaydauky == 1:
-                thang = today.month - 2 if today.month > 2 else (12 if today.month == 1 else 11)
-                nam = today.year if today.month > 2 else today.year - 1
+            # Tính kỳ trước nữa dựa trên ngaydauky
+            start_current, _, end_current, prev_end_ky = tinhngaydauky(self._ngaydauky, today)
+            
+            # Tính kỳ trước: từ prev_start_ky đến prev_end_ky
+            prev_start_ky, _, _, _ = tinhngaydauky(self._ngaydauky, prev_end_ky)
+            
+            # Tính kỳ trước nữa: từ prev_start_ky_prev đến prev_end_ky_prev
+            # prev_end_ky_prev = prev_start_ky - 1 ngày
+            prev_end_ky_prev = prev_start_ky - timedelta(days=1)
+            prev_start_ky_prev, _, _, _ = tinhngaydauky(self._ngaydauky, prev_end_ky_prev)
+            
+            # Lấy chỉ số đầu và cuối kỳ trước nữa
+            chi_so_dau_prev_prev = laychisongay(self._userevn, prev_start_ky_prev.strftime("%Y-%m-%d"))
+            if chi_so_dau_prev_prev is None or chi_so_dau_prev_prev <= 0:
+                chi_so_dau_prev_prev, ngay_dau_prev_prev = laychisongaygannhat(
+                    self._userevn,
+                    prev_start_ky_prev.strftime("%Y-%m-%d"),
+                    reverse=False  # Tìm ngày gần nhất SAU ngày đầu kỳ
+                )
             else:
-                if today.day < self._ngaydauky:
-                    thang = today.month - 2 if today.month > 2 else (12 if today.month == 1 else 11)
-                    nam = today.year if today.month > 2 else today.year - 1
-                else:
-                    thang = today.month - 1 if today.month > 1 else 12
-                    nam = today.year if today.month > 1 else today.year - 1
-            _, san_luong = laydientieuthuthang(self._userevn, thang, nam)
+                ngay_dau_prev_prev = prev_start_ky_prev.strftime("%d-%m-%Y")
+            
+            chi_so_cuoi_prev_prev = laychisongay(self._userevn, prev_end_ky_prev.strftime("%Y-%m-%d"))
+            if chi_so_cuoi_prev_prev is None or chi_so_cuoi_prev_prev <= 0:
+                chi_so_cuoi_prev_prev, ngay_cuoi_prev_prev = laychisongaygannhat(
+                    self._userevn,
+                    prev_end_ky_prev.strftime("%Y-%m-%d"),
+                    reverse=True  # Tìm ngày gần nhất TRƯỚC ngày cuối kỳ
+                )
+            else:
+                ngay_cuoi_prev_prev = prev_end_ky_prev.strftime("%d-%m-%Y")
+            
+            # Tính sản lượng kỳ trước nữa
+            if chi_so_dau_prev_prev is not None and chi_so_cuoi_prev_prev is not None and chi_so_cuoi_prev_prev > chi_so_dau_prev_prev:
+                san_luong = chi_so_cuoi_prev_prev - chi_so_dau_prev_prev
+                self._attributes = {
+                    "Tính theo chỉ số": True,
+                    "Chỉ số đầu kỳ trước nữa": format_kwh(chi_so_dau_prev_prev),
+                    "Chỉ số cuối kỳ trước nữa": format_kwh(chi_so_cuoi_prev_prev),
+                    "Ngày đầu kỳ trước nữa": ngay_dau_prev_prev,
+                    "Ngày cuối kỳ trước nữa": ngay_cuoi_prev_prev
+                }
+                return format_kwh(san_luong)
+            
+            # Fallback: thử lấy từ monthly_bill
+            prev_start_month = prev_start_ky_prev.month
+            prev_start_year = prev_start_ky_prev.year
+            _, san_luong = laydientieuthuthang(self._userevn, prev_start_month, prev_start_year)
             self._attributes = {
-                "Tháng": f"{thang:02d}",
-                "Năm": str(nam)
+                "Tháng": f"{prev_start_month:02d}",
+                "Năm": str(prev_start_year)
             }
             return format_kwh(san_luong)
         # Tiền điện kỳ trước
@@ -487,20 +536,60 @@ class EVNSensor(SensorEntity):
             return int(round(tien, 0)) if tien is not None else 0
         # Tiền điện kỳ trước nữa
         if self._sensor_type == "tien_dien_ky_truoc_nua":
-            if self._ngaydauky == 1:
-                thang = today.month - 2 if today.month > 2 else (12 if today.month == 1 else 11)
-                nam = today.year if today.month > 2 else today.year - 1
+            # Tính kỳ trước nữa dựa trên ngaydauky
+            start_current, _, end_current, prev_end_ky = tinhngaydauky(self._ngaydauky, today)
+            
+            # Tính kỳ trước: từ prev_start_ky đến prev_end_ky
+            prev_start_ky, _, _, _ = tinhngaydauky(self._ngaydauky, prev_end_ky)
+            
+            # Tính kỳ trước nữa: từ prev_start_ky_prev đến prev_end_ky_prev
+            # prev_end_ky_prev = prev_start_ky - 1 ngày
+            prev_end_ky_prev = prev_start_ky - timedelta(days=1)
+            prev_start_ky_prev, _, _, _ = tinhngaydauky(self._ngaydauky, prev_end_ky_prev)
+            
+            # Lấy chỉ số đầu và cuối kỳ trước nữa
+            chi_so_dau_prev_prev = laychisongay(self._userevn, prev_start_ky_prev.strftime("%Y-%m-%d"))
+            if chi_so_dau_prev_prev is None or chi_so_dau_prev_prev <= 0:
+                chi_so_dau_prev_prev, ngay_dau_prev_prev = laychisongaygannhat(
+                    self._userevn,
+                    prev_start_ky_prev.strftime("%Y-%m-%d"),
+                    reverse=False  # Tìm ngày gần nhất SAU ngày đầu kỳ
+                )
             else:
-                if today.day < self._ngaydauky:
-                    thang = today.month - 2 if today.month > 2 else (12 if today.month == 1 else 11)
-                    nam = today.year if today.month > 2 else today.year - 1
-                else:
-                    thang = today.month - 1 if today.month > 1 else 12
-                    nam = today.year if today.month > 1 else today.year - 1
-            tien, _ = laydientieuthuthang(self._userevn, thang, nam)
+                ngay_dau_prev_prev = prev_start_ky_prev.strftime("%d-%m-%Y")
+            
+            chi_so_cuoi_prev_prev = laychisongay(self._userevn, prev_end_ky_prev.strftime("%Y-%m-%d"))
+            if chi_so_cuoi_prev_prev is None or chi_so_cuoi_prev_prev <= 0:
+                chi_so_cuoi_prev_prev, ngay_cuoi_prev_prev = laychisongaygannhat(
+                    self._userevn,
+                    prev_end_ky_prev.strftime("%Y-%m-%d"),
+                    reverse=True  # Tìm ngày gần nhất TRƯỚC ngày cuối kỳ
+                )
+            else:
+                ngay_cuoi_prev_prev = prev_end_ky_prev.strftime("%d-%m-%Y")
+            
+            # Tính tiêu thụ và tiền điện kỳ trước nữa
+            if chi_so_dau_prev_prev is not None and chi_so_cuoi_prev_prev is not None and chi_so_cuoi_prev_prev > chi_so_dau_prev_prev:
+                tieu_thu = chi_so_cuoi_prev_prev - chi_so_dau_prev_prev
+                tien, tien_details = tinhtiendien(tieu_thu)
+                self._attributes = {
+                    "Tính theo công thức": True,
+                    "Tiêu thụ": round(tieu_thu, 2),
+                    "Chi tiết tính tiền": tien_details,
+                    "Chỉ số đầu kỳ trước nữa": format_kwh(chi_so_dau_prev_prev),
+                    "Chỉ số cuối kỳ trước nữa": format_kwh(chi_so_cuoi_prev_prev),
+                    "Ngày đầu kỳ trước nữa": ngay_dau_prev_prev,
+                    "Ngày cuối kỳ trước nữa": ngay_cuoi_prev_prev
+                }
+                return int(round(tien, 0)) if tien is not None else 0
+            
+            # Fallback: thử lấy từ monthly_bill
+            prev_start_month = prev_start_ky_prev.month
+            prev_start_year = prev_start_ky_prev.year
+            tien, _ = laydientieuthuthang(self._userevn, prev_start_month, prev_start_year)
             self._attributes = {
-                "Tháng": f"{thang:02d}",
-                "Năm": str(nam)
+                "Tháng": f"{prev_start_month:02d}",
+                "Năm": str(prev_start_year)
             }
             return int(round(tien, 0)) if tien is not None else 0
         # Chi tiết tiêu thụ kỳ này
@@ -564,14 +653,22 @@ class EVNSensor(SensorEntity):
             lich_cat_dien = laylichcatdien(self._userevn)
             if lich_cat_dien:
                 today_date = dt_util.now().date()
-                future_events = [
-                    event for event in lich_cat_dien
-                    if datetime.strptime(event["Ngày"], "%d-%m-%Y").date() > today_date
-                ]
-                past_events = [
-                    event for event in lich_cat_dien
-                    if datetime.strptime(event["Ngày"], "%d-%m-%Y").date() <= today_date
-                ]
+                future_events = []
+                past_events = []
+                
+                for event in lich_cat_dien:
+                    if not event.get("Ngày"):
+                        continue
+                    try:
+                        event_date = datetime.strptime(event["Ngày"], "%d-%m-%Y").date()
+                        if event_date > today_date:
+                            future_events.append(event)
+                        else:
+                            past_events.append(event)
+                    except (ValueError, TypeError) as e:
+                        _LOGGER.warning(f"Error parsing date '{event.get('Ngày')}' in lich_cat_dien: {e}")
+                        continue
+                
                 future_events.sort(key=lambda x: datetime.strptime(x["Ngày"], "%d-%m-%Y"))
                 past_events.sort(key=lambda x: datetime.strptime(x["Ngày"], "%d-%m-%Y"), reverse=True)
                 self._attributes = {
@@ -596,8 +693,13 @@ class EVNSensor(SensorEntity):
                         f"{earliest_event['Thời gian đến']})"
                     )
                 else:
+                    self._attributes = {
+                        "Tương Lai": [],
+                        "Quá Khứ": past_events
+                    }
                     return "Không có lịch cắt điện"
             else:
+                # Không có dữ liệu trong DB
                 self._attributes = {
                     "Tương Lai": [],
                     "Quá Khứ": []
@@ -605,7 +707,7 @@ class EVNSensor(SensorEntity):
                 return "Không có lịch cắt điện"
         # Thời gian cập nhật cuối cùng
         if self._sensor_type == "lan_cap_nhat_cuoi":
-            last_update = get_lancapnhapcuoi(self._hass, self._userevn)
+            last_update = get_lancapnhapcuoi(self.coordinator.hass, self._userevn)
             self._attributes = {"device_class": "timestamp"}
             if last_update is not None:
                 return last_update.isoformat()
@@ -647,19 +749,20 @@ class EVNSensor(SensorEntity):
     @property
     def device_info(self):
         return {
-            "identifiers": {(DOMAIN, self._userevn)},
-            "name": f"EVN VN Device ({self._userevn})",
+            "identifiers": {(DOMAIN, self._customer_id)},
+            "name": f"EVN VN Device ({self._customer_id})",
             "manufacturer": "Smarthome Black",
             "model": "EVN VN",
-            "sw_version": "2025.7.21",
+            "sw_version": "2026.1.25",
         }
 
     @property
-    def should_poll(self):
-        return True
-
-    async def async_update(self):
-        pass
+    def available(self) -> bool:
+        """Return if entity is available."""
+        # Lịch cắt điện luôn available, ngay cả khi không có data
+        if self._sensor_type == "lich_cat_dien":
+            return True
+        return self.coordinator.last_update_success
 
     @property
     def extra_state_attributes(self):

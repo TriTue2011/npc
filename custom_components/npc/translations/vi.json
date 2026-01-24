@@ -9,7 +9,31 @@
         "data_description": {
           "phuong_thuc": "Chọn cách thêm mã khách hàng EVN"
         },
-        "description": "{method_info}"
+        "description": "### 🔌 Cấu hình EVN VN\n\nChọn khu vực điện lực của bạn:\n- **HN**: Hà Nội\n- **NPC**: Miền Bắc\n- **CPC**: Miền Trung\n- **SPC**: Miền Nam"
+      },
+      "credentials": {
+        "title": "🔐 Thông tin đăng nhập",
+        "data": {
+          "username": "👤 Tên đăng nhập",
+          "password": "🔒 Mật khẩu"
+        },
+        "data_description": {
+          "username": "Nhập tên đăng nhập để đăng nhập vào hệ thống EVN",
+          "password": "Nhập mật khẩu để đăng nhập vào hệ thống EVN"
+        },
+        "description": "### 🔐 Thông tin đăng nhập\n\nNhập username và password để đăng nhập vào hệ thống EVN."
+      },
+      "customer_id": {
+        "title": "📋 Thông tin tài khoản",
+        "data": {
+          "customer_id": "🆔 Mã khách hàng",
+          "ngaydauky": "📅 Ngày đầu kỳ hóa đơn"
+        },
+        "data_description": {
+          "customer_id": "Nhập mã khách hàng EVN (bắt đầu bằng P hoặc S, tối thiểu 11 ký tự)",
+          "ngaydauky": "Chọn ngày bắt đầu chu kỳ thanh toán (thường là ngày 1-28)"
+        },
+        "description": "### 📋 Thông tin tài khoản\n\nNhập mã khách hàng và ngày đầu kỳ thanh toán."
       },      "auto": {
         "title": "🤖 Thiết lập Tự Động",
         "data": {
@@ -63,7 +87,11 @@
     },
     "error": {
       "invalid_evn_code": "❌ Mã khách hàng không hợp lệ!\n\n✅ Định dạng đúng:\n• Bắt đầu bằng P hoặc S\n• Có ít nhất 11 ký tự\n• Ví dụ: PE06800012345",
-      "customer_not_found": "🔍 Mã khách hàng không tồn tại!\n\n❗ Lý do có thể:\n• Nhập sai mã khách hàng của tài khoản\n• Addon EVN VN chạy lỗi\n• Addon EVN VN chưa lấy xong dữ liệu\n\n💬 Vui lòng kiểm tra lại hoặc liên hệ admin"
+      "customer_not_found": "🔍 Mã khách hàng không tồn tại!\n\n❗ Lý do có thể:\n• Nhập sai mã khách hàng của tài khoản\n• Addon EVN VN chạy lỗi\n• Addon EVN VN chưa lấy xong dữ liệu\n\n💬 Vui lòng kiểm tra lại hoặc liên hệ admin",
+      "invalid_format": "❌ Mã khách hàng không hợp lệ!\n\n✅ Định dạng đúng:\n• Bắt đầu bằng P hoặc S\n• Có ít nhất 11 ký tự\n• Ví dụ: PE06800012345",
+      "invalid_auth": "❌ Đăng nhập thất bại!\n\n❗ Vui lòng kiểm tra lại:\n• Tên đăng nhập\n• Mật khẩu\n• Kết nối mạng",
+      "no_data": "⚠️ Không thể lấy dữ liệu!\n\n❗ Có thể do:\n• Mã khách hàng không đúng\n• Chưa có dữ liệu trong hệ thống\n• Lỗi kết nối API",
+      "unknown": "❌ Đã xảy ra lỗi không xác định!\n\n💬 Vui lòng thử lại hoặc kiểm tra logs để biết thêm chi tiết"
     }
   },
   "options": {

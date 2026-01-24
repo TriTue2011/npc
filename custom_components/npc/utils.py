@@ -109,6 +109,10 @@ def dinhdangngay(date_str):
     if isinstance(date_str, str) and len(date_str) == 10 and date_str[4] == "-":
         y, m, d = date_str.split("-")
         return f"{d}-{m}-{y}"
+    # Chuyển dd/mm/yyyy -> dd-mm-yyyy nếu đúng định dạng
+    if isinstance(date_str, str) and len(date_str) == 10 and date_str[2] == "/" and date_str[5] == "/":
+        d, m, y = date_str.split("/")
+        return f"{d}-{m}-{y}"
     return date_str
 
 
@@ -287,17 +291,22 @@ def laychisongaygannhat(userevn, date_str, reverse=False):
         if row and row[1] is not None:
             try:
                 ngay = row[0]
+                chi_so_value = row[1]
+                
                 # Kiểm tra thêm một lần nữa để đảm bảo không lấy dữ liệu không hợp lệ
-                if row[1] == "Khôngcódữliệu" or row[1].lower() == "không có dữ liệu":
-                    _LOGGER.debug(f"laychisongaygannhat: Bỏ qua dữ liệu không hợp lệ {row[1]}")
-                    return None, None
-                chi_so = chuyen_doi_so(row[1])
+                # row[1] có thể là float hoặc string
+                if isinstance(chi_so_value, str):
+                    if chi_so_value == "Khôngcódữliệu" or chi_so_value.lower() == "không có dữ liệu":
+                        _LOGGER.debug(f"laychisongaygannhat: Bỏ qua dữ liệu không hợp lệ {chi_so_value}")
+                        return None, None
+                
+                chi_so = chuyen_doi_so(chi_so_value)
                 if chi_so is None:
-                    _LOGGER.error(f"laychisongaygannhat: Lỗi chuyển đổi chỉ số: {row[1]}")
+                    _LOGGER.error(f"laychisongaygannhat: Lỗi chuyển đổi chỉ số: {chi_so_value}")
                     return None, None
                 _LOGGER.debug(f"laychisongaygannhat: Thành công, ngày={ngay}, chỉ số={chi_so}")
                 return chi_so, ngay
-            except (TypeError, ValueError) as e:
+            except (TypeError, ValueError, AttributeError) as e:
                 _LOGGER.error(f"laychisongaygannhat: Lỗi chuyển đổi chỉ số: {row[1]}, lỗi: {str(e)}")
                 return None, None
         else:
@@ -357,32 +366,60 @@ def layhoadon(userevn, year):
 
 def laylichcatdien(userevn):
     """Lấy lịch cắt điện từ database"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT ngay_bat_dau, ngay_ket_thuc, thoi_gian_bat_dau,
-               thoi_gian_ket_thuc, ly_do, khu_vuc
-        FROM power_outage_schedule
-        WHERE userevn=?
-        ORDER BY ngay_bat_dau DESC
-        """,
-        (userevn,)
-    )
-    rows = cursor.fetchall()
-    conn.close()
-    _LOGGER.debug(f"laylichcatdien({userevn}) => {rows}")
-    result = []
-    for row in rows:
-        if row[0]:
-            result.append({
-                "Ngày": row[0],
-                "Thời gian từ": row[2],
-                "Thời gian đến": row[3],
-                "Lý do": row[4],
-                "Khu vực": row[5]
-            })
-    return result
+    try:
+        import os
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Create table if not exists
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS power_outage_schedule (
+                userevn TEXT,
+                ngay_bat_dau TEXT,
+                ngay_ket_thuc TEXT,
+                thoi_gian_bat_dau TEXT,
+                thoi_gian_ket_thuc TEXT,
+                ly_do TEXT,
+                khu_vuc TEXT,
+                PRIMARY KEY (userevn, ngay_bat_dau, thoi_gian_bat_dau)
+            )
+        """)
+        
+        cursor.execute(
+            """
+            SELECT ngay_bat_dau, ngay_ket_thuc, thoi_gian_bat_dau,
+                   thoi_gian_ket_thuc, ly_do, khu_vuc
+            FROM power_outage_schedule
+            WHERE userevn=?
+            ORDER BY ngay_bat_dau DESC
+            """,
+            (userevn,)
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        _LOGGER.debug(f"laylichcatdien({userevn}) => {rows}")
+        result = []
+        for row in rows:
+            if row[0]:  # ngay_bat_dau
+                # Format date if needed
+                ngay = str(row[0]) if row[0] else ""
+                thoi_gian_tu = str(row[2]) if row[2] else ""
+                thoi_gian_den = str(row[3]) if row[3] else ""
+                ly_do = str(row[4]) if row[4] else ""
+                khu_vuc = str(row[5]) if row[5] else ""
+                
+                result.append({
+                    "Ngày": ngay,
+                    "Thời gian từ": thoi_gian_tu,
+                    "Thời gian đến": thoi_gian_den,
+                    "Lý do": ly_do,
+                    "Khu vực": khu_vuc
+                })
+        return result
+    except Exception as e:
+        _LOGGER.error(f"Error in laylichcatdien: {e}", exc_info=True)
+        return []
 
 
 def lay_tien_no_evn(userevn):
