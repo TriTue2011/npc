@@ -66,11 +66,21 @@ class EVNAPI:
             # (như nestup_evn)
             ma_dviqly = self.customer_id[:6] if self.customer_id else ""
             ma_ddo = f"{self.customer_id}001" if self.customer_id else ""
-        elif self.ma_dviqly and self.ma_ddo:
-            # CPC/SPC: dùng maKhang để extract
-            # (đã được lưu trong login)
-            ma_dviqly = self.ma_dviqly
-            ma_ddo = self.ma_ddo
+        elif self.region == "CPC":
+            # CPC: dùng customer_id[:6] và customer_id + "001"
+            # (như test đã xác nhận)
+            ma_dviqly = self.customer_id[:6] if self.customer_id else ""
+            ma_ddo = f"{self.customer_id}001" if self.customer_id else ""
+        elif self.region == "SPC":
+            # SPC: dùng maKhang để extract (cho các API khác)
+            # Nhưng với chisongay, SPC dùng endpoint riêng với strMaDiemDo
+            if self.ma_dviqly and self.ma_ddo:
+                ma_dviqly = self.ma_dviqly
+                ma_ddo = self.ma_ddo
+            else:
+                # Fallback: extract từ customer_id
+                ma_dviqly = self.customer_id[:6] if self.customer_id else ""
+                ma_ddo = self.customer_id if self.customer_id else ""
         else:
             # Fallback: extract từ customer_id
             ma_dviqly = self.customer_id[:6] if self.customer_id else ""
@@ -328,6 +338,75 @@ class EVNAPI:
                 converted_record["dia_chi"] = record["strDiaChi"]
                 converted_record["KHU_VUC"] = record["strDiaChi"]
                 converted_record["khu_vuc"] = record["strDiaChi"]
+            
+            converted.append(converted_record)
+        
+        return converted
+
+    def _convert_cpc_outage_to_standard_format(self, records: list) -> list:
+        """Convert CPC outage API response format to standard format.
+        
+        CPC format: {
+            "TGIAN_BDAU": "05/12/2025 05:30",
+            "TGIAN_KTHUC": "05/12/2025 17:00",
+            "LY_DO": "Đội QLĐ Cẩm Lệ...",
+            "KHUVUCMATDIEN": "ĐZ 483HXU:..."
+        }
+        
+        Standard format: {
+            "NGAY_BAT_DAU": "05/12/2025",
+            "NGAY_KET_THUC": "05/12/2025",
+            "THOI_GIAN_BAT_DAU": "05:30",
+            "THOI_GIAN_KET_THUC": "17:00",
+            "LY_DO": "Đội QLĐ Cẩm Lệ...",
+            "KHU_VUC": "ĐZ 483HXU:..."
+        }
+        """
+        converted = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            
+            converted_record = {}
+            # Copy all existing fields
+            converted_record.update(record)
+            
+            # Parse TGIAN_BDAU: "05/12/2025 05:30" -> NGAY_BAT_DAU="05/12/2025", THOI_GIAN_BAT_DAU="05:30"
+            if "TGIAN_BDAU" in record and record["TGIAN_BDAU"]:
+                tgian_bdau = str(record["TGIAN_BDAU"]).strip()
+                # Extract date and time: "05/12/2025 05:30"
+                if " " in tgian_bdau:
+                    parts = tgian_bdau.split(" ", 1)
+                    if len(parts) == 2:
+                        date_part = parts[0].strip()
+                        time_part = parts[1].strip()
+                        converted_record["NGAY_BAT_DAU"] = date_part
+                        converted_record["THOI_GIAN_BAT_DAU"] = time_part
+                        converted_record["NGAY"] = date_part  # Also set NGAY for compatibility
+            
+            # Parse TGIAN_KTHUC: "05/12/2025 17:00" -> NGAY_KET_THUC="05/12/2025", THOI_GIAN_KET_THUC="17:00"
+            if "TGIAN_KTHUC" in record and record["TGIAN_KTHUC"]:
+                tgian_kthuc = str(record["TGIAN_KTHUC"]).strip()
+                # Extract date and time: "05/12/2025 17:00"
+                if " " in tgian_kthuc:
+                    parts = tgian_kthuc.split(" ", 1)
+                    if len(parts) == 2:
+                        date_part = parts[0].strip()
+                        time_part = parts[1].strip()
+                        converted_record["NGAY_KET_THUC"] = date_part
+                        converted_record["THOI_GIAN_KET_THUC"] = time_part
+            
+            # Convert LY_DO -> LY_DO (giữ nguyên vì đã đúng format)
+            if "LY_DO" in record:
+                converted_record["LY_DO"] = record["LY_DO"]
+                converted_record["ly_do"] = record["LY_DO"]
+            
+            # Convert KHUVUCMATDIEN -> KHU_VUC and DIA_CHI
+            if "KHUVUCMATDIEN" in record:
+                converted_record["KHU_VUC"] = record["KHUVUCMATDIEN"]
+                converted_record["khu_vuc"] = record["KHUVUCMATDIEN"]
+                converted_record["DIA_CHI"] = record["KHUVUCMATDIEN"]
+                converted_record["dia_chi"] = record["KHUVUCMATDIEN"]
             
             converted.append(converted_record)
         
@@ -738,14 +817,26 @@ class EVNAPI:
                                 if retry_resp.status != 200:
                                     _LOGGER.error(f"get_ngungcapdien failed with status {retry_resp.status}")
                                     return None
-                                return await retry_resp.json()
+                                data = await retry_resp.json()
+                                # Chuyển đổi format cho CPC
+                                if self.region == "CPC" and isinstance(data, dict) and data.get("data"):
+                                    if isinstance(data["data"], list):
+                                        converted_data = self._convert_cpc_outage_to_standard_format(data["data"])
+                                        return {"data": converted_data}
+                                return data
                         return None
 
                     if resp.status != 200:
                         _LOGGER.error(f"get_ngungcapdien failed with status {resp.status}")
                         return None
 
-                    return await resp.json()
+                    data = await resp.json()
+                    # Chuyển đổi format cho CPC
+                    if self.region == "CPC" and isinstance(data, dict) and data.get("data"):
+                        if isinstance(data["data"], list):
+                            converted_data = self._convert_cpc_outage_to_standard_format(data["data"])
+                            return {"data": converted_data}
+                    return data
 
         except Exception as e:
             _LOGGER.error(f"get_ngungcapdien error: {e}", exc_info=True)
