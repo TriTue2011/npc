@@ -555,19 +555,26 @@ class DataManager {
                 minDay = monthDataArr.find(d => d["Điện tiêu thụ (kWh)"] === min)?.Ngày || '';
                 maxDay = monthDataArr.find(d => d["Điện tiêu thụ (kWh)"] === max)?.Ngày || '';
 
-                // Tìm dữ liệu tiền điện từ monthlyData
+                // Tìm dữ liệu tiền điện từ monthlyData (theo cả Tháng và Năm)
+                const [monthStr, yearStr] = monthYear.split('-');
+                const targetYear = parseInt(yearStr);
                 const monthlyDataItem = this.monthlyData?.TienDien?.find(item => {
                     const itemMonth = item.Tháng.toString().padStart(2, '0');
+                    const itemYear = item.Năm || new Date().getFullYear();
                     const targetMonth = monthNum.toString().padStart(2, '0');
-                    return itemMonth === targetMonth;
+                    return itemMonth === targetMonth && itemYear === targetYear;
                 });
 
-                if (monthlyDataItem) {
+                if (monthlyDataItem && monthlyDataItem["Tiền Điện"]) {
                     monthlyCost = parseInt(monthlyDataItem["Tiền Điện"] || 0);
-                } else if (index === 0) {
-                    // Nếu là kỳ hiện tại và không có dữ liệu từ monthlyData, tính tạm
-                    const costCalculation = this.tinhTienDien(totalConsumption);
-                    monthlyCost = costCalculation.total;
+                } else {
+                    // Nếu không có dữ liệu từ monthlyData, tính từ sản lượng
+                    if (totalConsumption > 0) {
+                        const costCalculation = this.tinhTienDien(totalConsumption);
+                        monthlyCost = costCalculation.total;
+                    } else {
+                        monthlyCost = 0;
+                    }
                 }                // Tính trend so với chu kỳ trước
                 if (index < recentMonths.length - 1) {
                     const prevMonth = recentMonths[index + 1];
