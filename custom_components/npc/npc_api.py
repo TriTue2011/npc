@@ -221,6 +221,118 @@ class EVNAPI:
             _LOGGER.error(f"Switch account error: {e}", exc_info=True)
             return False
 
+    def _convert_spc_to_standard_format(self, records: list) -> list:
+        """Convert SPC API response format to standard format.
+        
+        SPC format: {
+            "strTime": "dd/mm/yyyy",
+            "dGiaoBT": 1234.56,
+            "dSanLuongBT": 10.5
+        }
+        
+        Standard format: {
+            "NGAY": "dd/mm/yyyy",
+            "CHISO_MOI": 1234.56,
+            "DIEN_TIEU_THU": 10.5
+        }
+        """
+        converted = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            
+            converted_record = {}
+            # Copy all existing fields
+            converted_record.update(record)
+            
+            # Convert strTime -> NGAY
+            if "strTime" in record:
+                converted_record["NGAY"] = record["strTime"]
+            
+            # Convert dGiaoBT -> CHISO_MOI and CHISO
+            if "dGiaoBT" in record:
+                converted_record["CHISO_MOI"] = record["dGiaoBT"]
+                converted_record["CHISO"] = record["dGiaoBT"]
+            
+            # Convert dSanLuongBT -> DIEN_TIEU_THU and SAN_LUONG
+            if "dSanLuongBT" in record:
+                converted_record["DIEN_TIEU_THU"] = record["dSanLuongBT"]
+                converted_record["SAN_LUONG"] = record["dSanLuongBT"]
+            
+            converted.append(converted_record)
+        
+        return converted
+
+    def _convert_spc_outage_to_standard_format(self, records: list) -> list:
+        """Convert SPC outage API response format to standard format.
+        
+        SPC format: {
+            "strTuNgay": "08:00:00 ngày 01/02/2026",
+            "strDenNgay": "08:15:00 ngày 01/02/2026",
+            "strThoiGianMatDien": "từ 08:00:00 ngày 01/02/2026 đến 08:15:00 ngày 01/02/2026",
+            "strLyDoMatDien": "Bảo trì, sửa chữa lưới điện",
+            "strDiaChi": "14.AB/38-39/7.H/1.H-T473-KP Tân Trà..."
+        }
+        
+        Standard format: {
+            "NGAY_BAT_DAU": "01/02/2026",
+            "NGAY_KET_THUC": "01/02/2026",
+            "THOI_GIAN_BAT_DAU": "08:00:00",
+            "THOI_GIAN_KET_THUC": "08:15:00",
+            "LY_DO": "Bảo trì, sửa chữa lưới điện",
+            "DIA_CHI": "14.AB/38-39/7.H/1.H-T473-KP Tân Trà..."
+        }
+        """
+        converted = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            
+            converted_record = {}
+            # Copy all existing fields
+            converted_record.update(record)
+            
+            # Parse strTuNgay: "08:00:00 ngày 01/02/2026" -> NGAY_BAT_DAU="01/02/2026", THOI_GIAN_BAT_DAU="08:00:00"
+            if "strTuNgay" in record and record["strTuNgay"]:
+                tu_ngay = str(record["strTuNgay"]).strip()
+                # Extract time and date: "08:00:00 ngày 01/02/2026"
+                if "ngày" in tu_ngay:
+                    parts = tu_ngay.split("ngày")
+                    if len(parts) == 2:
+                        time_part = parts[0].strip()
+                        date_part = parts[1].strip()
+                        converted_record["THOI_GIAN_BAT_DAU"] = time_part
+                        converted_record["NGAY_BAT_DAU"] = date_part
+                        converted_record["NGAY"] = date_part  # Also set NGAY for compatibility
+            
+            # Parse strDenNgay: "08:15:00 ngày 01/02/2026" -> NGAY_KET_THUC="01/02/2026", THOI_GIAN_KET_THUC="08:15:00"
+            if "strDenNgay" in record and record["strDenNgay"]:
+                den_ngay = str(record["strDenNgay"]).strip()
+                # Extract time and date: "08:15:00 ngày 01/02/2026"
+                if "ngày" in den_ngay:
+                    parts = den_ngay.split("ngày")
+                    if len(parts) == 2:
+                        time_part = parts[0].strip()
+                        date_part = parts[1].strip()
+                        converted_record["THOI_GIAN_KET_THUC"] = time_part
+                        converted_record["NGAY_KET_THUC"] = date_part
+            
+            # Convert strLyDoMatDien -> LY_DO
+            if "strLyDoMatDien" in record:
+                converted_record["LY_DO"] = record["strLyDoMatDien"]
+                converted_record["ly_do"] = record["strLyDoMatDien"]
+            
+            # Convert strDiaChi -> DIA_CHI and KHU_VUC
+            if "strDiaChi" in record:
+                converted_record["DIA_CHI"] = record["strDiaChi"]
+                converted_record["dia_chi"] = record["strDiaChi"]
+                converted_record["KHU_VUC"] = record["strDiaChi"]
+                converted_record["khu_vuc"] = record["strDiaChi"]
+            
+            converted.append(converted_record)
+        
+        return converted
+
     async def get_chisongay(
         self, from_date: str, to_date: str
     ) -> Optional[Dict[str, Any]]:
@@ -239,46 +351,101 @@ class EVNAPI:
 
         try:
             session = await self._get_session()
-            url = f"{self.base_url}/api/evn/tracuu/chisongay"
+            
+            # SPC dùng endpoint và format riêng
+            if self.region == "SPC":
+                from datetime import datetime, timedelta
+                # Convert dd/mm/yyyy to YYYYMMDD format (như nestup_evn: from_date - 1 ngày)
+                from_date_obj = datetime.strptime(from_date, "%d/%m/%Y") - timedelta(days=1)
+                to_date_obj = datetime.strptime(to_date, "%d/%m/%Y")
+                from_date_str = from_date_obj.strftime("%Y%m%d")
+                to_date_str = to_date_obj.strftime("%Y%m%d")
+                
+                url = f"{self.base_url}/api/NghiepVu/LayThongTinSanLuongTheoNgay_v2"
+                params = {
+                    "strMaDiemDo": f"{self.customer_id}001",
+                    "strFromDate": from_date_str,
+                    "strToDate": to_date_str,
+                }
+                headers = {
+                    "accept": "application/json, text/plain, */*",
+                    "user-agent": "okhttp/4.12.0",
+                    "authorization": f"Bearer {self.access_token}",
+                }
+                
+                _LOGGER.debug(f"get_chisongay (SPC): URL={url}, params={params}, region={self.region}")
+                
+                async with session.get(url, params=params, headers=headers, ssl=False) as resp:
+                    if resp.status == 401:
+                        # Token expired, try login again
+                        if await self.login():
+                            headers["authorization"] = f"Bearer {self.access_token}"
+                            async with session.get(url, params=params, headers=headers, ssl=False) as retry_resp:
+                                if retry_resp.status != 200:
+                                    error_text = await retry_resp.text()
+                                    _LOGGER.error(f"get_chisongay failed with status {retry_resp.status}, response: {error_text[:500]}")
+                                    return None
+                                data = await retry_resp.json()
+                                # SPC trả về list trực tiếp, chuyển đổi format và wrap vào dict với key "data"
+                                if isinstance(data, list):
+                                    converted_data = self._convert_spc_to_standard_format(data)
+                                    return {"data": converted_data}
+                                return data
+                        return None
 
-            # Lấy MA_DVIQLY và MA_DDO dựa trên region
-            ma_dviqly, ma_ddo = self._get_ma_dviqly_and_ma_ddo()
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        _LOGGER.error(f"get_chisongay failed with status {resp.status}, URL={url}, params={params}, response: {error_text[:500]}")
+                        return None
 
-            payload = {
-                "MA_DVIQLY": ma_dviqly,
-                "MA_DDO": ma_ddo,
-                "TU_NGAY": from_date,
-                "DEN_NGAY": to_date,
-            }
+                    data = await resp.json()
+                    # SPC trả về list trực tiếp, chuyển đổi format và wrap vào dict với key "data"
+                    if isinstance(data, list):
+                        converted_data = self._convert_spc_to_standard_format(data)
+                        return {"data": converted_data}
+                    return data
+            else:
+                # Các region khác dùng endpoint chung
+                url = f"{self.base_url}/api/evn/tracuu/chisongay"
 
-            headers = {
-                "accept": "application/json, text/plain, */*",
-                "content-type": "application/json",
-                "user-agent": "okhttp/4.12.0",
-                "authorization": f"Bearer {self.access_token}",
-            }
+                # Lấy MA_DVIQLY và MA_DDO dựa trên region
+                ma_dviqly, ma_ddo = self._get_ma_dviqly_and_ma_ddo()
 
-            _LOGGER.debug(f"get_chisongay: URL={url}, payload={payload}, region={self.region}")
+                payload = {
+                    "MA_DVIQLY": ma_dviqly,
+                    "MA_DDO": ma_ddo,
+                    "TU_NGAY": from_date,
+                    "DEN_NGAY": to_date,
+                }
 
-            async with session.post(url, json=payload, headers=headers, ssl=False) as resp:
-                if resp.status == 401:
-                    # Token expired, try login again
-                    if await self.login():
-                        headers["authorization"] = f"Bearer {self.access_token}"
-                        async with session.post(url, json=payload, headers=headers, ssl=False) as retry_resp:
-                            if retry_resp.status != 200:
-                                error_text = await retry_resp.text()
-                                _LOGGER.error(f"get_chisongay failed with status {retry_resp.status}, response: {error_text[:500]}")
-                                return None
-                            return await retry_resp.json()
-                    return None
+                headers = {
+                    "accept": "application/json, text/plain, */*",
+                    "content-type": "application/json",
+                    "user-agent": "okhttp/4.12.0",
+                    "authorization": f"Bearer {self.access_token}",
+                }
 
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    _LOGGER.error(f"get_chisongay failed with status {resp.status}, URL={url}, payload={payload}, response: {error_text[:500]}")
-                    return None
+                _LOGGER.debug(f"get_chisongay: URL={url}, payload={payload}, region={self.region}")
 
-                return await resp.json()
+                async with session.post(url, json=payload, headers=headers, ssl=False) as resp:
+                    if resp.status == 401:
+                        # Token expired, try login again
+                        if await self.login():
+                            headers["authorization"] = f"Bearer {self.access_token}"
+                            async with session.post(url, json=payload, headers=headers, ssl=False) as retry_resp:
+                                if retry_resp.status != 200:
+                                    error_text = await retry_resp.text()
+                                    _LOGGER.error(f"get_chisongay failed with status {retry_resp.status}, response: {error_text[:500]}")
+                                    return None
+                                return await retry_resp.json()
+                        return None
+
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        _LOGGER.error(f"get_chisongay failed with status {resp.status}, URL={url}, payload={payload}, response: {error_text[:500]}")
+                        return None
+
+                    return await resp.json()
 
         except Exception as e:
             _LOGGER.error(f"get_chisongay error: {e}", exc_info=True)
@@ -301,45 +468,95 @@ class EVNAPI:
                 return None
 
         try:
-            session = await self._get_session()
-            url = f"{self.base_url}/api/evn/tracuu/chisothang"
-
-            # Lấy MA_DVIQLY và MA_DDO dựa trên region
-            ma_dviqly, ma_ddo = self._get_ma_dviqly_and_ma_ddo()
-
-            # Format: MM/YYYY
-            thang_nam = f"{month:02d}/{year}"
-
-            payload = {
-                "MA_DVIQLY": ma_dviqly,
-                "MA_DDO": ma_ddo,
-                "TU_THANG_NAM": thang_nam,
-                "DEN_THANG_NAM": thang_nam,
-            }
-
-            headers = {
-                "accept": "application/json, text/plain, */*",
-                "content-type": "application/json",
-                "user-agent": "okhttp/4.12.0",
-                "authorization": f"Bearer {self.access_token}",
-            }
-
-            async with session.post(url, json=payload, headers=headers, ssl=False) as resp:
-                if resp.status == 401:
-                    if await self.login():
-                        headers["authorization"] = f"Bearer {self.access_token}"
-                        async with session.post(url, json=payload, headers=headers, ssl=False) as retry_resp:
-                            if retry_resp.status != 200:
-                                _LOGGER.error(f"get_chisothang failed with status {retry_resp.status}")
-                                return None
-                            return await retry_resp.json()
+            # SPC tính từ dữ liệu ngày (như nestup_evn)
+            if self.region == "SPC":
+                from datetime import datetime, timedelta
+                from calendar import monthrange
+                
+                # Lấy dữ liệu ngày cho cả tháng
+                month_start = datetime(year, month, 1)
+                _, last_day = monthrange(year, month)
+                month_end = datetime(year, month, last_day)
+                
+                # Gọi get_chisongay để lấy dữ liệu ngày
+                from_date = (month_start - timedelta(days=1)).strftime("%d/%m/%Y")
+                to_date = month_end.strftime("%d/%m/%Y")
+                
+                daily_data = await self.get_chisongay(from_date, to_date)
+                if not daily_data or not daily_data.get("data"):
+                    _LOGGER.error("get_chisothang: Failed to get daily data for SPC")
                     return None
-
-                if resp.status != 200:
-                    _LOGGER.error(f"get_chisothang failed with status {resp.status}")
+                
+                records = daily_data["data"]
+                if not isinstance(records, list) or len(records) == 0:
+                    _LOGGER.error("get_chisothang: No daily records for SPC")
                     return None
+                
+                # Tính chỉ số tháng như nestup_evn
+                first_record = records[0]
+                last_record = records[-1]
+                
+                d_giao_bt_old = float(first_record.get("dGiaoBT", 0))
+                d_giao_bt_new = float(last_record.get("dGiaoBT", 0))
+                chi_so_thang = round(d_giao_bt_new - d_giao_bt_old, 2)
+                
+                # Parse ngày từ response
+                from_date_parsed = datetime.strptime(first_record.get("strTime", ""), "%d/%m/%Y") + timedelta(days=1)
+                to_date_parsed = datetime.strptime(last_record.get("strTime", ""), "%d/%m/%Y")
+                
+                # Trả về format tương tự như API chisothang
+                return {
+                    "data": {
+                        "Thang": month,
+                        "Nam": year,
+                        "ChiSoThang": chi_so_thang,
+                        "ChiSoDau": d_giao_bt_old,
+                        "ChiSoCuoi": d_giao_bt_new,
+                        "TuNgay": from_date_parsed.strftime("%d/%m/%Y"),
+                        "DenNgay": to_date_parsed.strftime("%d/%m/%Y"),
+                    }
+                }
+            else:
+                # Các region khác dùng endpoint chung
+                session = await self._get_session()
+                url = f"{self.base_url}/api/evn/tracuu/chisothang"
 
-                return await resp.json()
+                # Lấy MA_DVIQLY và MA_DDO dựa trên region
+                ma_dviqly, ma_ddo = self._get_ma_dviqly_and_ma_ddo()
+
+                # Format: MM/YYYY
+                thang_nam = f"{month:02d}/{year}"
+
+                payload = {
+                    "MA_DVIQLY": ma_dviqly,
+                    "MA_DDO": ma_ddo,
+                    "TU_THANG_NAM": thang_nam,
+                    "DEN_THANG_NAM": thang_nam,
+                }
+
+                headers = {
+                    "accept": "application/json, text/plain, */*",
+                    "content-type": "application/json",
+                    "user-agent": "okhttp/4.12.0",
+                    "authorization": f"Bearer {self.access_token}",
+                }
+
+                async with session.post(url, json=payload, headers=headers, ssl=False) as resp:
+                    if resp.status == 401:
+                        if await self.login():
+                            headers["authorization"] = f"Bearer {self.access_token}"
+                            async with session.post(url, json=payload, headers=headers, ssl=False) as retry_resp:
+                                if retry_resp.status != 200:
+                                    _LOGGER.error(f"get_chisothang failed with status {retry_resp.status}")
+                                    return None
+                                return await retry_resp.json()
+                        return None
+
+                    if resp.status != 200:
+                        _LOGGER.error(f"get_chisothang failed with status {resp.status}")
+                        return None
+
+                    return await resp.json()
 
         except Exception as e:
             _LOGGER.error(f"get_chisothang error: {e}", exc_info=True)
@@ -357,31 +574,77 @@ class EVNAPI:
 
         try:
             session = await self._get_session()
-            url = f"{self.base_url}/api/evn/tracuu/hoadon"
+            
+            # SPC dùng endpoint và format riêng
+            if self.region == "SPC":
+                url = f"{self.base_url}/api/NghiepVu/TraCuuNoHoaDon"
+                params = {
+                    "strMaKH": self.ma_khang if self.ma_khang else self.customer_id,
+                }
+                headers = {
+                    "User-Agent": "evnapp/59 CFNetwork/1240.0.4 Darwin/20.6.0",
+                    "Authorization": f"Bearer {self.access_token}",
+                    "Accept": "application/json",
+                    "Accept-Encoding": "gzip, deflate, br",
+                    "Accept-Language": "vi-vn",
+                    "Connection": "keep-alive",
+                }
+                
+                _LOGGER.debug(f"get_hoadon (SPC): URL={url}, params={params}, region={self.region}")
+                
+                async with session.get(url, params=params, headers=headers, ssl=False) as resp:
+                    if resp.status == 401:
+                        if await self.login():
+                            headers["Authorization"] = f"Bearer {self.access_token}"
+                            async with session.get(url, params=params, headers=headers, ssl=False) as retry_resp:
+                                if retry_resp.status != 200:
+                                    error_text = await retry_resp.text()
+                                    _LOGGER.error(f"get_hoadon failed with status {retry_resp.status}, response: {error_text[:500]}")
+                                    return None
+                                data = await retry_resp.json()
+                                # SPC trả về list trực tiếp, wrap vào dict với key "data"
+                                if isinstance(data, list):
+                                    return {"data": data}
+                                return data
+                        return None
 
-            headers = {
-                "accept": "application/json, text/plain, */*",
-                "content-type": "application/json",
-                "user-agent": "okhttp/4.12.0",
-                "authorization": f"Bearer {self.access_token}",
-            }
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        _LOGGER.error(f"get_hoadon failed with status {resp.status}, URL={url}, params={params}, response: {error_text[:500]}")
+                        return None
 
-            async with session.post(url, headers=headers, ssl=False) as resp:
-                if resp.status == 401:
-                    if await self.login():
-                        headers["authorization"] = f"Bearer {self.access_token}"
-                        async with session.post(url, headers=headers, ssl=False) as retry_resp:
-                            if retry_resp.status != 200:
-                                _LOGGER.error(f"get_hoadon failed with status {retry_resp.status}")
-                                return None
-                            return await retry_resp.json()
-                    return None
+                    data = await resp.json()
+                    # SPC trả về list trực tiếp, wrap vào dict với key "data"
+                    if isinstance(data, list):
+                        return {"data": data}
+                    return data
+            else:
+                # Các region khác dùng endpoint chung
+                url = f"{self.base_url}/api/evn/tracuu/hoadon"
 
-                if resp.status != 200:
-                    _LOGGER.error(f"get_hoadon failed with status {resp.status}")
-                    return None
+                headers = {
+                    "accept": "application/json, text/plain, */*",
+                    "content-type": "application/json",
+                    "user-agent": "okhttp/4.12.0",
+                    "authorization": f"Bearer {self.access_token}",
+                }
 
-                return await resp.json()
+                async with session.post(url, headers=headers, ssl=False) as resp:
+                    if resp.status == 401:
+                        if await self.login():
+                            headers["authorization"] = f"Bearer {self.access_token}"
+                            async with session.post(url, headers=headers, ssl=False) as retry_resp:
+                                if retry_resp.status != 200:
+                                    _LOGGER.error(f"get_hoadon failed with status {retry_resp.status}")
+                                    return None
+                                return await retry_resp.json()
+                        return None
+
+                    if resp.status != 200:
+                        _LOGGER.error(f"get_hoadon failed with status {resp.status}")
+                        return None
+
+                    return await resp.json()
 
         except Exception as e:
             _LOGGER.error(f"get_hoadon error: {e}", exc_info=True)
@@ -405,36 +668,84 @@ class EVNAPI:
 
         try:
             session = await self._get_session()
-            url = f"{self.base_url}/api/evn/tracuu/ngungcapdien"
+            
+            # SPC dùng endpoint và format riêng
+            if self.region == "SPC":
+                url = f"{self.base_url}/api/NghiepVu/TraCuuLichNgungGiamCungCapDien"
+                params = {
+                    "strMaKH": self.ma_khang if self.ma_khang else self.customer_id,
+                }
+                headers = {
+                    "User-Agent": "evnapp/59 CFNetwork/1240.0.4 Darwin/20.6.0",
+                    "Authorization": f"Bearer {self.access_token}",
+                    "Accept": "application/json",
+                    "Accept-Encoding": "gzip, deflate, br",
+                    "Accept-Language": "vi-vn",
+                    "Connection": "keep-alive",
+                }
+                
+                _LOGGER.debug(f"get_ngungcapdien (SPC): URL={url}, params={params}, region={self.region}")
+                
+                async with session.get(url, params=params, headers=headers, ssl=False) as resp:
+                    if resp.status == 401:
+                        if await self.login():
+                            headers["Authorization"] = f"Bearer {self.access_token}"
+                            async with session.get(url, params=params, headers=headers, ssl=False) as retry_resp:
+                                if retry_resp.status != 200:
+                                    error_text = await retry_resp.text()
+                                    _LOGGER.error(f"get_ngungcapdien failed with status {retry_resp.status}, response: {error_text[:500]}")
+                                    return None
+                                data = await retry_resp.json()
+                                # SPC trả về list trực tiếp, chuyển đổi format và wrap vào dict với key "data"
+                                if isinstance(data, list):
+                                    converted_data = self._convert_spc_outage_to_standard_format(data)
+                                    return {"data": converted_data}
+                                return data
+                        return None
 
-            payload = {
-                "TU_NGAY": from_date,
-                "DEN_NGAY": to_date,
-            }
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        _LOGGER.error(f"get_ngungcapdien failed with status {resp.status}, URL={url}, params={params}, response: {error_text[:500]}")
+                        return None
 
-            headers = {
-                "accept": "application/json, text/plain, */*",
-                "content-type": "application/json",
-                "user-agent": "okhttp/4.12.0",
-                "authorization": f"Bearer {self.access_token}",
-            }
+                    data = await resp.json()
+                    # SPC trả về list trực tiếp, chuyển đổi format và wrap vào dict với key "data"
+                    if isinstance(data, list):
+                        converted_data = self._convert_spc_outage_to_standard_format(data)
+                        return {"data": converted_data}
+                    return data
+            else:
+                # Các region khác dùng endpoint chung
+                url = f"{self.base_url}/api/evn/tracuu/ngungcapdien"
 
-            async with session.post(url, json=payload, headers=headers, ssl=False) as resp:
-                if resp.status == 401:
-                    if await self.login():
-                        headers["authorization"] = f"Bearer {self.access_token}"
-                        async with session.post(url, json=payload, headers=headers, ssl=False) as retry_resp:
-                            if retry_resp.status != 200:
-                                _LOGGER.error(f"get_ngungcapdien failed with status {retry_resp.status}")
-                                return None
-                            return await retry_resp.json()
-                    return None
+                payload = {
+                    "TU_NGAY": from_date,
+                    "DEN_NGAY": to_date,
+                }
 
-                if resp.status != 200:
-                    _LOGGER.error(f"get_ngungcapdien failed with status {resp.status}")
-                    return None
+                headers = {
+                    "accept": "application/json, text/plain, */*",
+                    "content-type": "application/json",
+                    "user-agent": "okhttp/4.12.0",
+                    "authorization": f"Bearer {self.access_token}",
+                }
 
-                return await resp.json()
+                async with session.post(url, json=payload, headers=headers, ssl=False) as resp:
+                    if resp.status == 401:
+                        if await self.login():
+                            headers["authorization"] = f"Bearer {self.access_token}"
+                            async with session.post(url, json=payload, headers=headers, ssl=False) as retry_resp:
+                                if retry_resp.status != 200:
+                                    _LOGGER.error(f"get_ngungcapdien failed with status {retry_resp.status}")
+                                    return None
+                                return await retry_resp.json()
+                        return None
+
+                    if resp.status != 200:
+                        _LOGGER.error(f"get_ngungcapdien failed with status {resp.status}")
+                        return None
+
+                    return await resp.json()
 
         except Exception as e:
             _LOGGER.error(f"get_ngungcapdien error: {e}", exc_info=True)
