@@ -17,6 +17,7 @@ from .const import (
     REGION_NPC,
     REGION_CPC,
     REGION_SPC,
+    REGION_HCMC,
 )
 from .npc_api import EVNAPI
 
@@ -27,6 +28,7 @@ REGION_OPTIONS = [
     {"value": REGION_NPC, "label": "Miền Bắc (NPC)"},
     {"value": REGION_CPC, "label": "Miền Trung (CPC)"},
     {"value": REGION_SPC, "label": "Miền Nam (SPC)"},
+    {"value": REGION_HCMC, "label": "Hồ Chí Minh (HCMC)"},
 ]
 
 
@@ -69,6 +71,7 @@ Chọn khu vực điện lực của bạn:
 - **NPC**: Miền Bắc
 - **CPC**: Miền Trung  
 - **SPC**: Miền Nam
+- **HCMC**: Hồ Chí Minh
                 """
             }
         )

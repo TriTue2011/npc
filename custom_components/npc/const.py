@@ -12,6 +12,7 @@ REGION_HN = "HN"
 REGION_NPC = "NPC"
 REGION_CPC = "CPC"
 REGION_SPC = "SPC"
+REGION_HCMC = "HCMC"
 
 # Database path
 DB_PATH = "/config/evnvn/evndata.db"
