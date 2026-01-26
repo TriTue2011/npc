@@ -159,18 +159,60 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                     record.get("chiSo")
                 )
                 
-                # Calculate daily consumption from previous day's reading
-                dien_tieu_thu = None
-                if prev_chi_so is not None and chi_so is not None and chi_so >= prev_chi_so:
-                    dien_tieu_thu = chi_so - prev_chi_so
-                else:
-                    # Try to get from API response
-                    dien_tieu_thu = self._parse_float(
-                        record.get("dien_tieu_thu") or 
-                        record.get("DIEN_TIEU_THU") or
-                        record.get("SAN_LUONG") or
-                        record.get("san_luong") or
-                        record.get("DIEN_TIEU_THU_KWH")
+                # Calculate daily consumption
+                # Priority: Use DIEN_TIEU_THU from API if available (HCMC, SPC provide this)
+                # Otherwise, calculate from meter readings
+                dien_tieu_thu = self._parse_float(
+                    record.get("dien_tieu_thu") or 
+                    record.get("DIEN_TIEU_THU") or
+                    record.get("SAN_LUONG") or
+                    record.get("san_luong") or
+                    record.get("DIEN_TIEU_THU_KWH")
+                )
+                
+                # If not provided by API, calculate from meter readings
+                # Only calculate if prev_ngay is the previous day (not many days ago)
+                if dien_tieu_thu is None and prev_chi_so is not None and chi_so is not None:
+                    # Check if prev_ngay is the previous day
+                    can_calculate = False
+                    if prev_ngay:
+                        try:
+                            from datetime import datetime
+                            prev_date = datetime.strptime(prev_ngay, "%d-%m-%Y").date()
+                            current_date = datetime.strptime(ngay, "%d-%m-%Y").date()
+                            # Only calculate if prev_date is exactly 1 day before current_date
+                            if (current_date - prev_date).days == 1:
+                                can_calculate = True
+                            else:
+                                _LOGGER.debug(
+                                    f"Không tính tiêu thụ từ chỉ số cho {ngay}: "
+                                    f"ngày trước ({prev_ngay}) không phải ngày liền trước "
+                                    f"(cách {(current_date - prev_date).days} ngày)"
+                                )
+                        except Exception as e:
+                            _LOGGER.warning(f"Lỗi parse ngày để kiểm tra: {e}")
+                            # Fallback: allow calculation if dates are close (within 2 days)
+                            can_calculate = True
+                    else:
+                        # No previous day, cannot calculate
+                        can_calculate = False
+                    
+                    if can_calculate and chi_so >= prev_chi_so:
+                        dien_tieu_thu = chi_so - prev_chi_so
+                    elif chi_so < prev_chi_so:
+                        # Chỉ số giảm (có thể reset hoặc lỗi), không tính
+                        _LOGGER.warning(
+                            f"Chỉ số giảm tại {ngay}: {chi_so} < {prev_chi_so}, "
+                            f"bỏ qua tính tiêu thụ từ chỉ số"
+                        )
+                        dien_tieu_thu = None
+                
+                # Log để debug
+                if ngay and dien_tieu_thu is not None and dien_tieu_thu > 10:
+                    _LOGGER.warning(
+                        f"Tiêu thụ ngày {ngay} có vẻ cao: {dien_tieu_thu} kWh. "
+                        f"Chi so: {chi_so}, Prev chi so: {prev_chi_so}, "
+                        f"From API: {record.get('DIEN_TIEU_THU') or record.get('Tong')}"
                     )
 
                 cursor.execute("""
