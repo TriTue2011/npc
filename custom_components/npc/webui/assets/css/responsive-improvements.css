@@ -1,0 +1,462 @@
+/* ========================================
+   CẢI TIẾN RESPONSIVE VÀ LAYOUT MỚI
+   ======================================== */
+
+/* ✅ 1. SUMMARY STAT ROW - Layout mới cho Min/Max/Avg */
+.summary-stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    margin: 3px 0;
+    padding: 2px 0;
+    flex-wrap: nowrap;
+}
+
+.summary-stat-row span {
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.summary-change {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+}
+
+.summary-change.positive {
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.1);
+}
+
+.summary-change.negative {
+    color: #34d399;
+    background: rgba(52, 211, 153, 0.1);
+}
+
+.summary-change.neutral {
+    color: #94a3b8;
+    background: rgba(148, 163, 184, 0.1);
+}
+
+/* ✅ 2. YEAR SELECT DROPDOWN - Thêm vào header */
+#yearSelect {
+    background: rgba(45, 45, 68, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #e0e0e0;
+    border-radius: 8px;
+    transition: all 0.3s;
+    font-weight: 500;
+}
+
+#yearSelect:focus {
+    outline: none;
+    border-color: #e961ab;
+    box-shadow: 0 0 0 3px rgba(233, 97, 171, 0.2);
+}
+
+#yearSelect:hover {
+    border-color: rgba(255, 255, 255, 0.4);
+}
+
+/* ✅ 3. RESPONSIVE OPTIMIZATION - Mobile First */
+
+/* Mobile phones (0-640px) */
+@media (max-width: 640px) {
+    /* Summary cards optimization */
+    #summaryContainer {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 4px;
+    }
+    
+    #summaryContainer .card {
+        padding: 4px;
+        font-size: 0.7rem;
+    }
+    
+    #summaryContainer .card h4 {
+        font-size: 0.75rem;
+        margin-bottom: 3px;
+    }
+    
+    /* Summary stat row - ultra compact */
+    .summary-stat-row {
+        gap: 2px;
+        font-size: 0.6rem;
+        margin: 2px 0;
+        padding: 0;
+    }
+
+    .summary-stat-row span {
+        padding: 0 1px;
+        min-width: 0;
+        font-size: 0.55rem;
+    }
+    
+    .summary-change {
+        font-size: 0.5rem;
+        padding: 1px 3px;
+    }
+    
+    .min-value,
+    .max-value {
+        font-size: 0.55rem;
+    }
+    
+    .min-value i,
+    .max-value i {
+        font-size: 0.5rem;
+    }
+    
+    /* Summary stat inline */
+    .summary-stat-inline {
+        font-size: 0.65rem;
+        gap: 2px;
+    }
+    
+    .summary-stat-inline i {
+        font-size: 0.7rem;
+    }
+    
+    .summary-stat-inline strong {
+        font-size: 0.7rem;
+    }
+    
+    /* Header buttons - icon only on mobile */
+    #billingCycleBtn span,
+    #configBtn span {
+        display: none;
+    }
+
+    #billingCycleBtn i,
+    #configBtn i {
+        margin: 0;
+        font-size: 1rem;
+    }
+    
+    /* Chart containers - smaller height on mobile */
+    .chart-container {
+        height: 200px !important;
+    }
+    
+    /* Year select - full width on mobile */
+    #yearSelect {
+        width: 100%;
+        margin-top: 4px;
+    }
+}
+
+/* Small tablets (641px-768px) */
+@media (min-width: 641px) and (max-width: 768px) {
+    #summaryContainer {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+    }
+    
+    #summaryContainer .card {
+        padding: 6px;
+        font-size: 0.75rem;
+    }
+    
+    .chart-container {
+        height: 240px !important;
+    }
+    
+    /* Show button text on tablet */
+    #billingCycleBtn span,
+    #configBtn span {
+        display: inline;
+    }
+}
+
+/* Tablets (769px-1024px) */
+@media (min-width: 769px) and (max-width: 1024px) {
+    #summaryContainer {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+    }
+    
+    #summaryContainer .card {
+        padding: 8px;
+        font-size: 0.8rem;
+    }
+    
+    .chart-container {
+        height: 260px !important;
+    }
+}
+
+/* Desktop (1025px-1440px) */
+@media (min-width: 1025px) and (max-width: 1440px) {
+    #summaryContainer {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+    }
+    
+    #summaryContainer .card {
+        padding: 8px;
+        font-size: 0.85rem;
+    }
+    
+    .chart-container {
+        height: 280px !important;
+    }
+}
+
+/* Large desktop (1441px+) */
+@media (min-width: 1441px) {
+    #summaryContainer {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+    }
+    
+    #summaryContainer .card {
+        padding: 10px;
+        font-size: 0.9rem;
+    }
+    
+    .chart-container {
+        height: 300px !important;
+    }
+}
+
+/* ✅ 4. LANDSCAPE ORIENTATION OPTIMIZATION */
+@media (max-height: 600px) and (orientation: landscape) {
+    .chart-container {
+        height: 180px !important;
+    }
+    
+    #summaryContainer .card {
+        padding: 4px;
+        font-size: 0.7rem;
+    }
+    
+    .card {
+        padding: 6px;
+        margin-bottom: 6px;
+    }
+}
+
+/* ✅ 5. TOUCH TARGET OPTIMIZATION */
+@media (hover: none) and (pointer: coarse) {
+    /* Touch devices - minimum 44px touch targets */
+    .btn,
+    select,
+    input[type="date"] {
+        min-height: 44px;
+        min-width: 44px;
+    }
+    
+    .summary-month-card {
+        min-height: 44px;
+        cursor: pointer;
+        -webkit-tap-highlight-color: rgba(233, 97, 171, 0.2);
+    }
+    
+    .summary-month-card:active {
+        transform: scale(0.98);
+        background: rgba(255, 255, 255, 0.12);
+    }
+}
+
+/* ✅ 6. PRINT OPTIMIZATION */
+@media print {
+    body {
+        background: white;
+        color: black;
+    }
+    
+    .btn,
+    #themeSelect,
+    #svg-bg,
+    .toast-notification {
+        display: none !important;
+    }
+    
+    .card {
+        border: 1px solid #000;
+        page-break-inside: avoid;
+    }
+    
+    .chart-container {
+        height: 400px !important;
+    }
+}
+
+/* ✅ 7. HIGH CONTRAST MODE SUPPORT */
+@media (prefers-contrast: high) {
+    .card {
+        border: 2px solid currentColor;
+    }
+    
+    .summary-change.positive {
+        background: #dc2626;
+        color: white;
+    }
+    
+    .summary-change.negative {
+        background: #16a34a;
+        color: white;
+    }
+    
+    .btn {
+        border: 2px solid currentColor;
+    }
+}
+
+/* ✅ 8. REDUCED MOTION SUPPORT */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+    
+    .counter-up {
+        transition: none !important;
+    }
+}
+
+/* ✅ 9. DARK MODE SYSTEM PREFERENCE */
+@media (prefers-color-scheme: light) {
+    /* Sẽ được override bởi theme selector */
+}
+
+/* ✅ 10. ULTRA WIDE SCREENS (2K, 4K) */
+@media (min-width: 1920px) {
+    .content {
+        max-width: 1800px;
+        margin: 0 auto;
+    }
+}
+
+@media (min-width: 2560px) {
+    .content {
+        max-width: 2200px;
+        margin: 0 auto;
+    }
+    
+    .chart-container {
+        height: 400px !important;
+    }
+    
+    #summaryContainer {
+        grid-template-columns: repeat(4, 1fr);
+    }
+}
+
+/* ✅ 11. SPECIFIC DEVICE BREAKPOINTS */
+
+/* iPhone SE, 5/5S (320px) */
+@media (max-width: 375px) {
+    body {
+        padding: 4px;
+    }
+    
+    h1 {
+        font-size: 1rem;
+    }
+    
+    h3 {
+        font-size: 0.85rem;
+    }
+    
+    .summary-stat-inline {
+        font-size: 0.6rem;
+    }
+    
+    .summary-stat-inline i {
+        font-size: 0.65rem;
+    }
+}
+
+/* iPad Mini, iPad (768px) */
+@media (min-width: 768px) and (max-width: 834px) {
+    #summaryContainer {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    
+    .chart-container {
+        height: 280px !important;
+    }
+}
+
+/* iPad Pro (1024px) */
+@media (min-width: 1024px) and (max-width: 1366px) {
+    #summaryContainer {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    
+    .chart-container {
+        height: 320px !important;
+    }
+}
+
+/* ✅ 12. ACCESSIBILITY - FOCUS VISIBLE */
+:focus-visible {
+    outline: 2px solid #e961ab;
+    outline-offset: 2px;
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+    box-shadow: 0 0 0 3px rgba(233, 97, 171, 0.3);
+}
+
+/* ✅ 13. SMOOTH SCROLLING */
+html {
+    scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html {
+        scroll-behavior: auto;
+    }
+}
+
+/* ✅ 14. LOADING STATES */
+.loading {
+    pointer-events: none;
+    opacity: 0.6;
+    position: relative;
+}
+
+.loading::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 20px;
+    height: 20px;
+    margin: -10px 0 0 -10px;
+    border: 2px solid #e961ab;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+/* ✅ 15. SKELETON LOADING */
+.skeleton {
+    background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0.05) 25%,
+        rgba(255, 255, 255, 0.1) 50%,
+        rgba(255, 255, 255, 0.05) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+    0% {
+        background-position: -200% 0;
+    }
+    100% {
+        background-position: 200% 0;
+    }
+}

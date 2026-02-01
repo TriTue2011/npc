@@ -1,0 +1,54 @@
+/* Mobile Responsive Styles for Summary Cards */
+
+/* Điều chỉnh font size cho trend và avg trên mobile */
+@media (max-width: 768px) {
+    .summary-change {
+        font-size: 0.75em !important; /* Giảm từ 0.85em xuống 0.75em trên mobile */
+    }
+    
+    .summary-trend {
+        font-size: 0.9em; /* Giảm thêm chút nữa cho trend */
+    }
+    
+    .summary-avg {
+        font-size: 0.9em;
+    }
+}
+
+/* Điều chỉnh cho màn hình rất nhỏ (điện thoại nhỏ) */
+@media (max-width: 480px) {
+    .summary-change {
+        font-size: 0.7em !important; /* Giảm mạnh hơn cho điện thoại nhỏ */
+        gap: 4px;
+    }
+    
+    .summary-trend {
+        font-size: 0.85em;
+    }
+    
+    .summary-avg {
+        font-size: 0.85em;
+    }
+    
+    /* Có thể xếp thành 2 dòng nếu quá chật */
+    .summary-change.wrap-mobile {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+    }
+}
+
+/* Điều chỉnh summary cards layout trên mobile */
+@media (max-width: 640px) {
+    .summary-month-card {
+        font-size: 0.9em; /* Giảm tổng thể font size của card */
+    }
+    
+    .summary-stat-inline {
+        font-size: 0.9em;
+    }
+    
+    .summary-stat-row {
+        font-size: 0.85em;
+    }
+}
