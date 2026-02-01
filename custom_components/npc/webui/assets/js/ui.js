@@ -145,10 +145,36 @@ class UIManager {
         return themeNames[themeName] || themeName;
     }
 
+    // Populate year select dropdown
+    populateYearSelect(years) {
+        const yearSelect = document.getElementById('yearSelect');
+        if (!yearSelect) return;
+        
+        // Keep the "all" option
+        const currentValue = yearSelect.value;
+        yearSelect.innerHTML = '<option value="all">Tất cả các năm</option>';
+        
+        // Add year options in descending order
+        years.sort((a, b) => b - a).forEach(year => {
+            const option = document.createElement('option');
+            option.value = year;
+            option.textContent = year;
+            yearSelect.appendChild(option);
+        });
+        
+        // Restore selection if still valid
+        if (currentValue && (currentValue === 'all' || years.includes(parseInt(currentValue)))) {
+            yearSelect.value = currentValue;
+        }
+    }
+
     // Render summary container    // Render summary container - Old design style
     renderSummaryContainer(trendData) {
         const summaryContainer = document.getElementById('summaryContainer');
         summaryContainer.innerHTML = '';
+        
+        // Check if mobile for additional responsive class
+        const isMobile = window.innerWidth <= 480;
         
         trendData.forEach((data, index) => {
             const summaryDiv = document.createElement('div');
@@ -184,10 +210,14 @@ class UIManager {
                     <span class="max-value">
                         Max: <i class="fas fa-arrow-up text-red-500"></i><strong class="text-red-500">${data.max.toFixed(1)}</strong>
                     </span>
-                    <span>Avg: <strong>${data.avg.toFixed(1)}</strong></span>
                 </div>
-                <div class="summary-change ${trendClass}">
-                    ${trendSymbol} ${data.trendValue > 0 ? '+' : ''}${data.trendValue.toFixed(1)} (${data.trendPercent > 0 ? '+' : ''}${data.trendPercent.toFixed(1)}%)
+                <div class="summary-change ${trendClass}" style="display: flex; justify-content: space-between; align-items: center; font-size: min(0.85em, 3.2vw); margin-top: 4px;">
+                    <span class="summary-trend" style="font-size: clamp(0.7em, 2vw, 1em);">
+                        ${trendSymbol} ${data.trendValue > 0 ? '+' : ''}${data.trendValue.toFixed(1)} (${data.trendPercent > 0 ? '+' : ''}${data.trendPercent.toFixed(1)}%)
+                    </span>
+                    <span class="summary-avg" style="color: var(--text-secondary); font-size: clamp(0.7em, 2vw, 1em);">
+                        Avg: <strong style="color: var(--text-primary);">${data.avg.toFixed(1)}</strong>
+                    </span>
                 </div>
             `;
             summaryContainer.appendChild(summaryDiv);

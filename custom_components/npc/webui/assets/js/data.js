@@ -244,7 +244,7 @@ class DataManager {
             return dayDate >= startDate && dayDate <= endDate && day["Điện tiêu thụ (kWh)"] > 0;
         });
     }    // Tính toán thống kê tổng quan (bao gồm kỳ hiện tại)
-    calculateSummary() {
+    calculateSummary(filterYear = null) {
         // Đảm bảo monthlyData có structure đúng
         if (!this.monthlyData) {
             this.monthlyData = { SanLuong: [], TienDien: [] };
@@ -261,28 +261,43 @@ class DataManager {
             this.dailyData = [];
         }
         
+        // Lọc dữ liệu theo năm nếu có
+        let filteredTienDien = this.monthlyData.TienDien;
+        let filteredSanLuong = this.monthlyData.SanLuong;
+        let filteredDailyData = this.dailyData;
+        
+        if (filterYear) {
+            filteredTienDien = this.monthlyData.TienDien.filter(item => item.Năm === filterYear);
+            filteredSanLuong = this.monthlyData.SanLuong.filter(item => item.Năm === filterYear);
+            filteredDailyData = this.dailyData.filter(day => {
+                if (!day.Ngày) return false;
+                const year = parseInt(day.Ngày.split('-')[2]);
+                return year === filterYear;
+            });
+        }
+        
         // Tổng tiền điện
-        const totalCost = this.monthlyData.TienDien.reduce((sum, item) => {
+        const totalCost = filteredTienDien.reduce((sum, item) => {
             const value = item["Tiền Điện"] || 0;
             return sum + (typeof value === 'number' ? value : parseFloat(value) || 0);
         }, 0);
 
         // Trung bình hàng tháng
-        const avgMonthlyCost = this.monthlyData.TienDien.length > 0 
-            ? totalCost / this.monthlyData.TienDien.length 
+        const avgMonthlyCost = filteredTienDien.length > 0 
+            ? totalCost / filteredTienDien.length 
             : 0;
 
         // Tổng và trung bình tiêu thụ hàng tháng
-        const totalMonthlyConsumption = this.monthlyData.SanLuong.reduce((sum, item) => {
+        const totalMonthlyConsumption = filteredSanLuong.reduce((sum, item) => {
             const value = item["Điện tiêu thụ (KWh)"] || 0;
             return sum + (typeof value === 'number' ? value : parseFloat(value) || 0);
         }, 0);
-        const avgMonthlyConsumption = this.monthlyData.SanLuong.length > 0
-            ? totalMonthlyConsumption / this.monthlyData.SanLuong.length 
+        const avgMonthlyConsumption = filteredSanLuong.length > 0
+            ? totalMonthlyConsumption / filteredSanLuong.length 
             : 0;
 
         // Trung bình hàng ngày
-        const validDailyData = this.dailyData.filter(day => {
+        const validDailyData = filteredDailyData.filter(day => {
             const value = day["Điện tiêu thụ (kWh)"];
             return value && (typeof value === 'number' ? value > 0 : parseFloat(value) > 0);
         });
@@ -294,7 +309,7 @@ class DataManager {
             ? totalDailyConsumption / validDailyData.length 
             : 0;
 
-        // Tính toán kỳ hiện tại
+        // Tính toán kỳ hiện tại (không lọc theo năm vì luôn là hiện tại)
         const currentPeriod = this.calculateCurrentPeriod();
 
         return {
@@ -370,20 +385,27 @@ class DataManager {
 
         return '';
     }    // Lấy các tháng duy nhất từ dữ liệu (hỗ trợ chu kỳ thanh toán)
-    getUniqueMonths() {
+    getUniqueMonths(filterYear = null) {
         const billingCycle = this.getBillingCycle();
         console.log('📅 getUniqueMonths - billing cycle:', billingCycle);
+        console.log('📅 getUniqueMonths - filter year:', filterYear);
 
         // Đảm bảo dailyData là array
         if (!this.dailyData || !Array.isArray(this.dailyData) || this.dailyData.length === 0) {
             console.warn('⚠️ getUniqueMonths: No daily data available');
             // Nếu không có daily data, thử lấy từ monthly data
             if (this.monthlyData && this.monthlyData.SanLuong && this.monthlyData.SanLuong.length > 0) {
-                const months = this.monthlyData.SanLuong.map(item => {
+                let months = this.monthlyData.SanLuong.map(item => {
                     const month = item.Tháng.toString().padStart(2, '0');
                     const year = item.Năm || new Date().getFullYear();
                     return `${month}-${year}`;
                 });
+                
+                // Lọc theo năm nếu có
+                if (filterYear) {
+                    months = months.filter(m => m.endsWith(`-${filterYear}`));
+                }
+                
                 return months.sort((a, b) => {
                     const [m1, y1] = a.split('-');
                     const [m2, y2] = b.split('-');
@@ -393,9 +415,19 @@ class DataManager {
             return [];
         }
 
+        // Lọc dailyData theo năm nếu có
+        let filteredDailyData = this.dailyData;
+        if (filterYear) {
+            filteredDailyData = this.dailyData.filter(day => {
+                if (!day.Ngày) return false;
+                const year = parseInt(day.Ngày.split('-')[2]);
+                return year === filterYear;
+            });
+        }
+
         if (billingCycle.type === 'calendar') {
             // Chu kỳ theo tháng dương lịch (cũ)
-            const uniqueMonths = [...new Set(this.dailyData.map(day => day.Ngày?.slice(3, 10)).filter(Boolean))];
+            const uniqueMonths = [...new Set(filteredDailyData.map(day => day.Ngày?.slice(3, 10)).filter(Boolean))];
             const result = uniqueMonths.sort((a, b) =>
                 new Date(b.split('-').reverse().join('-')) -
                 new Date(a.split('-').reverse().join('-'))
@@ -404,42 +436,47 @@ class DataManager {
             return result;
         } else if (billingCycle.type === 'cycle' && billingCycle.startDay === 1) {
             // Chu kỳ được cấu hình thủ công từ ngày 1 - xử lý như tháng dương lịch nhưng với "Kỳ này"
-            const uniqueMonths = [...new Set(this.dailyData.map(day => day.Ngày.slice(3, 10)))];
+            const uniqueMonths = [...new Set(filteredDailyData.map(day => day.Ngày.slice(3, 10)))];
             const sortedMonths = uniqueMonths.sort((a, b) =>
                 new Date(b.split('-').reverse().join('-')) -
                 new Date(a.split('-').reverse().join('-'))
             );
 
-            // Thay tháng hiện tại thành "Kỳ này" nếu có
-            const currentDate = new Date();
-            const currentMonthYear = `${(currentDate.getMonth() + 1).toString().padStart(2, '0')}-${currentDate.getFullYear()}`;
-            const currentIndex = sortedMonths.indexOf(currentMonthYear);
+            // Thay tháng hiện tại thành "Kỳ này" nếu có và không lọc theo năm
+            if (!filterYear) {
+                const currentDate = new Date();
+                const currentMonthYear = `${(currentDate.getMonth() + 1).toString().padStart(2, '0')}-${currentDate.getFullYear()}`;
+                const currentIndex = sortedMonths.indexOf(currentMonthYear);
 
-            console.log('📅 Manual day 1 cycle - current month:', currentMonthYear, 'found at index:', currentIndex);
+                console.log('📅 Manual day 1 cycle - current month:', currentMonthYear, 'found at index:', currentIndex);
 
-            if (currentIndex !== -1) {
-                // Thay thế tháng hiện tại bằng "Kỳ này"
-                sortedMonths[currentIndex] = currentMonthYear; // Giữ nguyên format để logic khác hoạt động
+                if (currentIndex !== -1) {
+                    // Thay thế tháng hiện tại bằng "Kỳ này"
+                    sortedMonths[currentIndex] = currentMonthYear; // Giữ nguyên format để logic khác hoạt động
+                }
             }
 
             console.log('📅 Manual day 1 cycle result:', sortedMonths);
             return sortedMonths;
         } else {
             // Chu kỳ thanh toán tùy chỉnh - tạo danh sách kỳ thanh toán
-            const result = this.generateBillingPeriods(billingCycle.startDay);
+            const result = this.generateBillingPeriods(billingCycle.startDay, filteredDailyData);
             console.log('📅 Custom billing cycle result:', result);
             return result;
         }
     }// Tạo danh sách các kỳ thanh toán từ dữ liệu có sẵn
-    generateBillingPeriods(startDay) {
+    generateBillingPeriods(startDay, filteredDailyData = null) {
+        // Sử dụng filteredDailyData nếu có, nếu không thì dùng this.dailyData
+        const dataToUse = filteredDailyData || this.dailyData;
+        
         // Đảm bảo dailyData là array
-        if (!this.dailyData || !Array.isArray(this.dailyData) || this.dailyData.length === 0) {
+        if (!dataToUse || !Array.isArray(dataToUse) || dataToUse.length === 0) {
             console.warn('⚠️ generateBillingPeriods: No daily data available');
             return [];
         }
         
         // Lấy ngày đầu tiên và cuối cùng từ dữ liệu
-        const dates = this.dailyData
+        const dates = dataToUse
             .map(day => {
                 if (!day.Ngày) return null;
                 try {
@@ -478,7 +515,7 @@ class DataManager {
             const shouldIncludePeriod = periods_info.start <= lastDate || isCurrentPeriod;
 
             if (shouldIncludePeriod) {                // Kiểm tra xem chu kỳ này có dữ liệu không
-                const hasDataInPeriod = this.dailyData.some(day => {
+                const hasDataInPeriod = dataToUse.some(day => {
                     const dayDate = new Date(day.Ngày.split('-').reverse().join('-'));
                     return dayDate >= periods_info.start && dayDate <= periods_info.end_ky;
                 });
@@ -757,6 +794,55 @@ class DataManager {
             // Chu kỳ thanh toán tùy chỉnh: chỉ tháng đầu tiên là kỳ hiện tại
             return index === 0;
         }
+    }
+
+    // Lấy danh sách các năm có trong dữ liệu
+    getAvailableYears() {
+        const years = new Set();
+        
+        // Lấy từ monthly data
+        if (this.monthlyData && this.monthlyData.SanLuong) {
+            this.monthlyData.SanLuong.forEach(item => {
+                if (item.Năm) {
+                    years.add(item.Năm);
+                }
+            });
+        }
+        
+        // Lấy từ daily data
+        if (this.dailyData && Array.isArray(this.dailyData)) {
+            this.dailyData.forEach(day => {
+                if (day.Ngày) {
+                    const year = parseInt(day.Ngày.split('-')[2]);
+                    if (!isNaN(year)) {
+                        years.add(year);
+                    }
+                }
+            });
+        }
+        
+        return Array.from(years).sort((a, b) => b - a);
+    }
+
+    // Lọc monthly data theo năm
+    getFilteredMonthlyData(year) {
+        if (!this.monthlyData) {
+            return { SanLuong: [], TienDien: [] };
+        }
+        
+        // Nếu không chọn năm cụ thể, trả về toàn bộ
+        if (!year) {
+            return this.monthlyData;
+        }
+        
+        // Lọc dữ liệu theo năm
+        const filteredSanLuong = this.monthlyData.SanLuong.filter(item => item.Năm === year);
+        const filteredTienDien = this.monthlyData.TienDien.filter(item => item.Năm === year);
+        
+        return {
+            SanLuong: filteredSanLuong,
+            TienDien: filteredTienDien
+        };
     }
 }
 

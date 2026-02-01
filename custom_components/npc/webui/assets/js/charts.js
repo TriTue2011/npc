@@ -328,24 +328,30 @@ class ChartManager {
     updateChartsTheme() {
         const currentTheme = document.body.getAttribute('data-theme') || 'dark-gradient';
         const themeConfig = this.getThemeChartConfig(currentTheme);
-        
-        // Update monthly chart if exists
+
+        const applyToScale = (scales, id) => {
+            if (scales && scales[id]) {
+                if (scales[id].ticks) scales[id].ticks.color = themeConfig.textColor;
+                if (scales[id].grid)  scales[id].grid.color  = themeConfig.gridColor;
+            }
+        };
+
+        // Monthly chart: axes are x, y1, y2
         if (this.monthlyChart) {
             this.monthlyChart.options.plugins.legend.labels.color = themeConfig.textColor;
-            this.monthlyChart.options.scales.x.ticks.color = themeConfig.textColor;
-            this.monthlyChart.options.scales.y.ticks.color = themeConfig.textColor;
-            this.monthlyChart.options.scales.x.grid.color = themeConfig.gridColor;
-            this.monthlyChart.options.scales.y.grid.color = themeConfig.gridColor;
+            const s = this.monthlyChart.options.scales;
+            applyToScale(s, 'x');
+            applyToScale(s, 'y1');
+            applyToScale(s, 'y2');
             this.monthlyChart.update('none');
         }
-        
-        // Update daily chart if exists
+
+        // Daily chart: axes are x, y
         if (this.dailyChart) {
             this.dailyChart.options.plugins.legend.labels.color = themeConfig.textColor;
-            this.dailyChart.options.scales.x.ticks.color = themeConfig.textColor;
-            this.dailyChart.options.scales.y.ticks.color = themeConfig.textColor;
-            this.dailyChart.options.scales.x.grid.color = themeConfig.gridColor;
-            this.dailyChart.options.scales.y.grid.color = themeConfig.gridColor;
+            const s = this.dailyChart.options.scales;
+            applyToScale(s, 'x');
+            applyToScale(s, 'y');
             this.dailyChart.update('none');
         }
     }
@@ -378,6 +384,18 @@ class ChartManager {
     getCurrentThemeColors() {
         const currentTheme = document.body.getAttribute('data-theme') || 'dark-gradient';
         return this.getThemeChartConfig(currentTheme);
+    }
+
+    // Destroy both charts
+    destroyCharts() {
+        if (this.monthlyChart) {
+            this.monthlyChart.destroy();
+            this.monthlyChart = null;
+        }
+        if (this.dailyChart) {
+            this.dailyChart.destroy();
+            this.dailyChart = null;
+        }
     }
 }
 

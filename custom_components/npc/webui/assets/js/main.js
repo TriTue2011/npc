@@ -35,7 +35,6 @@ class ElectricityApp {
         } catch (error) {
             console.error('Lỗi tải danh sách tài khoản:', error);
             this.uiManager.showToast('Không thể tải danh sách tài khoản từ options.json. Kiểm tra file và server.', 'error');
-            throw error;
         }
     }async loadDataForAccount() {
         this.uiManager.showLoader(true);
@@ -60,12 +59,16 @@ class ElectricityApp {
             this.uiManager.showLoader(false);
         }
     }processAndDisplayData() {
-        // Cập nhật dropdown tháng
-        const uniqueMonths = this.dataManager.getUniqueMonths();
+        // Lấy tất cả các năm có sẵn trong dữ liệu
+        const availableYears = this.dataManager.getAvailableYears();
+        this.uiManager.populateYearSelect(availableYears);
+
+        // Cập nhật dropdown tháng (đã lọc theo năm nếu có)
+        const uniqueMonths = this.dataManager.getUniqueMonths(this.currentYear);
         this.uiManager.populateMonthSelect(uniqueMonths);
 
-        // Tính toán và hiển thị summary
-        const summary = this.dataManager.calculateSummary();
+        // Tính toán và hiển thị summary (đã lọc theo năm)
+        const summary = this.dataManager.calculateSummary(this.currentYear);
         this.uiManager.updateSummaryNumbers(summary);        
         
         // Cập nhật hiển thị billing cycle info
@@ -75,9 +78,10 @@ class ElectricityApp {
         // Tạo summary cards với trend (có thể thay đổi số 4 thành số khác)
         const recentMonths = uniqueMonths.slice(0, 4); // 4 tháng gần nhất
         const trendData = this.dataManager.calculateTrendData(recentMonths);
-        this.uiManager.renderSummaryContainer(trendData);        // Tạo biểu đồ monthly
+        this.uiManager.renderSummaryContainer(trendData);        // Tạo biểu đồ monthly (đã lọc theo năm)
+        const filteredMonthlyData = this.dataManager.getFilteredMonthlyData(this.currentYear);
         this.chartManager.createMonthlyChart(
-            this.dataManager.monthlyData, 
+            filteredMonthlyData, 
             summary.currentPeriod,
             (evt, elements) => this.handleMonthlyChartClick(evt, elements)
         );
@@ -153,6 +157,18 @@ class ElectricityApp {
                 const filteredDailyData = this.dataManager.getDataByMonth(e.target.value);
                 this.chartManager.createDailyChart(filteredDailyData);
                 this.saveUIState(); // Save state on month change
+            });
+        }
+
+        // Year select change
+        const yearSelect = document.getElementById('yearSelect');
+        if (yearSelect) {
+            yearSelect.addEventListener('change', (e) => {
+                const selectedYear = e.target.value;
+                this.currentYear = selectedYear === 'all' ? null : parseInt(selectedYear);
+                console.log('📅 Year changed to:', this.currentYear || 'all');
+                this.processAndDisplayData();
+                this.saveUIState(); // Save state on year change
             });
         }        // Search functionality
         const searchBtn = document.getElementById('searchBtn');
@@ -691,12 +707,14 @@ class ElectricityApp {
     saveUIState() {
         const accountSelect = document.getElementById('accountSelect');
         const monthSelect = document.getElementById('monthSelect');
+        const yearSelect = document.getElementById('yearSelect');
         const startDate = document.getElementById('startDate');
         const endDate = document.getElementById('endDate');
         
         const state = {
             selectedAccount: accountSelect?.value || '',
             selectedMonth: monthSelect?.value || '',
+            selectedYear: yearSelect?.value || 'all',
             startDate: startDate?.value || '',
             endDate: endDate?.value || ''
         };
@@ -718,6 +736,13 @@ class ElectricityApp {
             const accountSelect = document.getElementById('accountSelect');
             if (accountSelect && state.selectedAccount) {
                 accountSelect.value = state.selectedAccount;
+            }
+            
+            // Restore year selection
+            const yearSelect = document.getElementById('yearSelect');
+            if (yearSelect && state.selectedYear) {
+                yearSelect.value = state.selectedYear;
+                this.currentYear = state.selectedYear === 'all' ? null : parseInt(state.selectedYear);
             }
             
             // Restore month selection

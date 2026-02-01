@@ -1,22 +1,4 @@
 // Config Modal Logic (migrated from inline index.html)
-function showConfigModal() {
-    console.log('showConfigModal called');
-    document.getElementById('configModal').classList.remove('hidden');
-    loadConfig();
-    fetchLogs();
-    if (configLogsInterval) clearInterval(configLogsInterval);
-    configLogsInterval = setInterval(fetchLogs, 2000);
-}
-function closeConfigModal() {
-    console.log('closeConfigModal called');
-    var modal = document.getElementById('configModal');
-    if (modal) {
-        modal.classList.add('hidden');
-        modal.classList.remove('show');
-    }
-    if (configLogsInterval) clearInterval(configLogsInterval);
-    configLogsInterval = null;
-}
 // ĐẢM BẢO: Không gọi showConfigModal() khi load trang!
 // Chỉ gán onclick cho nút Config:
 function addAccount(userevn = '', passevn = '', server = '') {
