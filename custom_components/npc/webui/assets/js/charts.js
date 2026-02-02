@@ -52,6 +52,24 @@ class ChartManager {
             backgroundColors.push('rgba(147, 112, 219, 0.8)');
             borderColors.push('rgba(147, 112, 219, 1)');
         });        // Thêm dữ liệu kỳ hiện tại nếu có
+
+        // Highlight tháng tiêu thụ cao nhất / thấp nhất
+        if (consumptionData.length > 0) {
+            const maxVal = Math.max(...consumptionData);
+            const minVal = Math.min(...consumptionData);
+
+            consumptionData.forEach((value, index) => {
+                if (value === maxVal) {
+                    backgroundColors[index] = 'rgba(46, 204, 64, 0.85)';
+                    borderColors[index] = 'rgba(46, 204, 64, 1)';
+                } else if (value === minVal) {
+                    backgroundColors[index] = 'rgba(231, 76, 60, 0.85)';
+                    borderColors[index] = 'rgba(231, 76, 60, 1)';
+                }
+            });
+        }
+
+        // Thêm dữ liệu kỳ hiện tại nếu có
         if (currentPeriod) {
             labels.push('Kỳ này');
             consumptionData.push(currentPeriod.consumption);
@@ -226,18 +244,33 @@ class ChartManager {
                     data: dailyDataValues,
                     fill: true,
                     backgroundColor: 'rgba(233, 97, 171, 0.2)',
-                    borderColor: 'rgba(233, 97, 171, 1)',
-                    borderWidth: 2,
+                    borderColor: data.map((day, idx) => {
+                        if (idx === 0) return 'rgba(147, 112, 219, 1)';
+                        if (day._trend === 'up') return 'rgba(46, 204, 113, 1)';
+                        if (day._trend === 'down') return 'rgba(231, 76, 60, 1)';
+                        return 'rgba(147, 112, 219, 1)';
+                    }),
+                    segment: {
+                        borderColor: ctx => {
+                            const v = dailyDataValues[ctx.p0DataIndex];
+                            if (v === maxVal) return '#2ecc40';
+                            if (v === minVal) return '#e74c3c';
+                            return data[ctx.p0DataIndex]._trend === 'up' ? 
+                                'rgba(46,204,113,1)' : 
+                                data[ctx.p0DataIndex]._trend === 'down' ? 
+                                'rgba(231,76,60,1)' : 'rgba(147,112,219,1)';
+                        }
+                    },                    tension: 0.4,
                     pointBackgroundColor: pointBackgroundColors,
                     pointRadius: pointRadius,
                     pointStyle: pointStyle,
-                    pointHoverRadius: 8,
-                    datalabels: { display: false }
+                    pointHoverRadius: 8, // Giảm kích thước hover
+                    pointHoverBackgroundColor: '#e961ab',
+                    pointBorderWidth: 1, // Giảm border width
                 }]
-            },
-            options: {
+            },            options: {
                 animation: {
-                    duration: 800,
+                    duration: 800, // Giảm thời gian animation
                     easing: 'easeOutQuart'
                 },
                 interaction: {
@@ -245,27 +278,15 @@ class ChartManager {
                     mode: 'index'
                 },
                 hover: {
-                    animationDuration: 0
-                },
-                scales: {
-                    y: {
-                        beginAtZero: true,
+                    animationDuration: 0 // Tắt animation khi hover
+                },                scales: { 
+                    y: { 
+                        beginAtZero: true, 
                         ticks: { 
                             color: this.getCurrentThemeColors().textColor
-                        },
-                        title: { 
-                            display: true, 
-                            text: 'Tiêu thụ (kWh)', 
-                            color: this.getCurrentThemeColors().textColor
-                        }
-                    },
-                    x: {
-                        ticks: { 
-                            color: this.getCurrentThemeColors().textColor
-                        }
-                    }
-                },
-                plugins: {
+                        } 
+                    } 
+                },                plugins: {
                     legend: { 
                         labels: { 
                             color: this.getCurrentThemeColors().textColor
@@ -273,12 +294,24 @@ class ChartManager {
                     },
                     tooltip: {
                         animation: {
-                            duration: 0
+                            duration: 0 // Tắt animation tooltip để tránh nháy
                         },
                         callbacks: {
                             label: function(context) {
-                                const value = context.parsed.y;
-                                return `${context.dataset.label}: ${value.toFixed(2)} kWh`;
+                                const idx = context.dataIndex;
+                                const day = data[idx];
+                                let label = `${context.dataset.label}: ${context.parsed.y.toFixed(2)} kWh`;
+                                
+                                if (typeof day._trend !== 'undefined' && idx > 0) {
+                                    const trendText = day._trend === 'up' ? '↗️' : 
+                                                    day._trend === 'down' ? '↘️' : '➡️';
+                                    label += ` ${trendText} ${day._trendValue > 0 ? '+' : ''}${day._trendValue.toFixed(2)}`;
+                                }
+                                
+                                if (context.parsed.y === maxVal) label += '  ⭐ Max';
+                                if (context.parsed.y === minVal) label += '  🥇 Min';
+                                label += `\nNgày: ${day.Ngày}`;
+                                return label;
                             }
                         }
                     }
@@ -291,69 +324,106 @@ class ChartManager {
         return this.dailyChart;
     }
 
-    // Get current theme colors
-    getCurrentThemeColors() {
-        const currentTheme = document.body.getAttribute('data-theme') || 'dark-gradient';
-        const themeConfig = this.getThemeChartConfig(currentTheme);
-        return themeConfig;
+    // Highlight cột lớn nhất/nhỏ nhất bằng hiệu ứng glow
+    highlightBarGlow(chart, color = '#e961ab') {
+        if (!chart) return;
+        
+        const ctx = chart.ctx;
+        const dataset = chart.data.datasets[0];
+        if (!dataset) return;
+        
+        const max = Math.max(...dataset.data);
+        const min = Math.min(...dataset.data);
+        
+        chart.getDatasetMeta(0).data.forEach((bar, i) => {
+            if (dataset.data[i] === max || dataset.data[i] === min) {
+                ctx.save();
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 18;
+                ctx.globalAlpha = 0.7;
+                ctx.beginPath();
+                ctx.arc(bar.x, bar.y, 18, 0, 2 * Math.PI);
+                ctx.fillStyle = color;
+                ctx.fill();
+                ctx.restore();
+            }
+        });
     }
 
-    // Theme-based chart configurations
-    getThemeChartConfig(themeName) {
-        const configs = {
-            'dark-gradient': {
-                textColor: '#cbd5e1'
-            },
-            'cyberpunk': {
-                textColor: '#f0eaff'
-            },
-            'neon-dreams': {
-                textColor: '#e9f0ff'
-            },
-            'aurora-borealis': {
-                textColor: '#f1f5f9'
-            },
-            'synthwave': {
-                textColor: '#fef08a'
-            },
-            'glassmorphism': {
-                textColor: '#f8fafc'
-            },
-            'neubrutalism': {
-                textColor: '#1f2937'
-            },
-            'matrix-rain': {
-                textColor: '#86efac'
-            },
-            'sunset-vibes': {
-                textColor: '#f8fafc'
-            },
-            'ocean-depth': {
-                textColor: '#e2e8f0'
-            },
-            'midnight-purple': {
-                textColor: '#e2e8f0'
-            },
-            'golden-hour': {
-                textColor: '#1f2937'
-            },
-            'forest-mist': {
-                textColor: '#f8fafc'
-            },
-            'cosmic-dust': {
-                textColor: '#f8fafc'
-            },
-            'tokyo-night': {
-                textColor: '#e2e8f0'
-            },
-            'minimal-light': {
-                textColor: '#1f2937'
+    // Update charts khi đổi theme
+    updateChartsTheme() {
+        const currentTheme = document.body.getAttribute('data-theme') || 'dark-gradient';
+        const themeConfig = this.getThemeChartConfig(currentTheme);
+
+        const applyToScale = (scales, id) => {
+            if (scales && scales[id]) {
+                if (scales[id].ticks) scales[id].ticks.color = themeConfig.textColor;
+                if (scales[id].grid)  scales[id].grid.color  = themeConfig.gridColor;
             }
         };
 
+        // Monthly chart: axes are x, y1, y2
+        if (this.monthlyChart) {
+            this.monthlyChart.options.plugins.legend.labels.color = themeConfig.textColor;
+            const s = this.monthlyChart.options.scales;
+            applyToScale(s, 'x');
+            applyToScale(s, 'y1');
+            applyToScale(s, 'y2');
+            this.monthlyChart.update('none');
+        }
+
+        // Daily chart: axes are x, y
+        if (this.dailyChart) {
+            this.dailyChart.options.plugins.legend.labels.color = themeConfig.textColor;
+            const s = this.dailyChart.options.scales;
+            applyToScale(s, 'x');
+            applyToScale(s, 'y');
+            this.dailyChart.update('none');
+        }
+    }
+    
+    // Get theme-specific chart configuration
+    getThemeChartConfig(themeName) {
+        const configs = {
+            'dark-gradient': { textColor: '#e0e0e0', gridColor: 'rgba(224, 224, 224, 0.1)' },
+            'cyberpunk': { textColor: '#00ff9f', gridColor: 'rgba(0, 255, 159, 0.2)' },
+            'neon-dreams': { textColor: '#ffffff', gridColor: 'rgba(255, 20, 147, 0.2)' },
+            'aurora-borealis': { textColor: '#ffffff', gridColor: 'rgba(26, 140, 255, 0.2)' },
+            'synthwave': { textColor: '#ff00ff', gridColor: 'rgba(255, 0, 255, 0.2)' },
+            'glassmorphism': { textColor: '#333333', gridColor: 'rgba(51, 51, 51, 0.1)' },
+            'neubrutalism': { textColor: '#000000', gridColor: 'rgba(0, 0, 0, 0.3)' },
+            'matrix-rain': { textColor: '#00ff00', gridColor: 'rgba(0, 255, 0, 0.2)' },
+            'sunset-vibes': { textColor: '#ffffff', gridColor: 'rgba(255, 255, 255, 0.2)' },
+            'ocean-depth': { textColor: '#87ceeb', gridColor: 'rgba(135, 206, 235, 0.2)' },
+            'midnight-purple': { textColor: '#dda0dd', gridColor: 'rgba(221, 160, 221, 0.2)' },
+            'golden-hour': { textColor: '#8b4513', gridColor: 'rgba(139, 69, 19, 0.2)' },
+            'forest-mist': { textColor: '#f0fff0', gridColor: 'rgba(240, 255, 240, 0.2)' },
+            'cosmic-dust': { textColor: '#e6e6fa', gridColor: 'rgba(230, 230, 250, 0.2)' },
+            'tokyo-night': { textColor: '#a9b1d6', gridColor: 'rgba(169, 177, 214, 0.2)' },
+            'minimal-light': { textColor: '#333333', gridColor: 'rgba(51, 51, 51, 0.1)' }
+        };
+        
         return configs[themeName] || configs['dark-gradient'];
+    }
+
+    // Get current theme colors
+    getCurrentThemeColors() {
+        const currentTheme = document.body.getAttribute('data-theme') || 'dark-gradient';
+        return this.getThemeChartConfig(currentTheme);
+    }
+
+    // Destroy both charts
+    destroyCharts() {
+        if (this.monthlyChart) {
+            this.monthlyChart.destroy();
+            this.monthlyChart = null;
+        }
+        if (this.dailyChart) {
+            this.dailyChart.destroy();
+            this.dailyChart = null;
+        }
     }
 }
 
-// Export for global access
+// Export cho sử dụng global
 window.ChartManager = ChartManager;

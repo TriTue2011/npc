@@ -250,6 +250,59 @@ class DataManager {
         return Number.isNaN(year) ? null : year;
     }
 
+    buildBillingPeriodRange(month, year, billingCycle) {
+        if (billingCycle.type === 'calendar' || (billingCycle.type === 'cycle' && billingCycle.startDay === 1)) {
+            const start = new Date(year, month - 1, 1);
+            const end = new Date(year, month, 0);
+            return { start, end };
+        }
+
+        const start = new Date(year, month - 2, billingCycle.startDay);
+        const end = new Date(year, month - 1, billingCycle.startDay - 1);
+
+        return { start, end };
+    }
+
+    buildPeriodSummaryForMonth(aggregatedMonthlyData, month, year) {
+        const billingCycle = this.getBillingCycle();
+        const entry = aggregatedMonthlyData.SanLuong.find(item =>
+            this.normalizeYearValue(item.Năm) === year && parseInt(item.Tháng, 10) === month
+        );
+        if (!entry) {
+            return null;
+        }
+
+        const costEntry = aggregatedMonthlyData.TienDien.find(item =>
+            this.normalizeYearValue(item.Năm) === year && parseInt(item.Tháng, 10) === month
+        );
+        const consumption = typeof entry["Điện tiêu thụ (KWh)"] === 'number'
+            ? entry["Điện tiêu thụ (KWh)"]
+            : parseFloat(entry["Điện tiêu thụ (KWh)"]) || 0;
+        const cost = costEntry
+            ? (typeof costEntry["Tiền Điện"] === 'number'
+                ? costEntry["Tiền Điện"]
+                : parseFloat(costEntry["Tiền Điện"]) || 0)
+            : 0;
+        const periodRange = this.buildBillingPeriodRange(month, year, billingCycle);
+
+        return {
+            month,
+            year,
+            consumption,
+            cost,
+            days: null,
+            isCurrentPeriod: false,
+            period: {
+                start: periodRange.start,
+                end: periodRange.end
+            },
+            details: {
+                subtotal: null,
+                tax: null
+            }
+        };
+    }
+
     getMonthlyAggregation(filterYear = null) {
         const targetYear = this.normalizeYearValue(filterYear);
         const monthlyData = this.monthlyData || { SanLuong: [], TienDien: [] };
@@ -423,7 +476,10 @@ class DataManager {
         // Tính toán kỳ hiện tại (chỉ khi đang xem năm hiện tại hoặc tất cả)
         const currentYear = new Date().getFullYear();
         const includeCurrentPeriod = targetYear === null || targetYear === currentYear;
-        const currentPeriod = includeCurrentPeriod ? this.calculateCurrentPeriod() : null;
+        let currentPeriod = null;
+        if (includeCurrentPeriod) {
+            currentPeriod = this.calculateCurrentPeriod();
+        }
 
         return {
             totalCost,
