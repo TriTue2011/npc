@@ -241,14 +241,6 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                             f"bỏ qua tính tiêu thụ từ chỉ số"
                         )
                         dien_tieu_thu = None
-                
-                # Log để debug
-                if ngay and dien_tieu_thu is not None and dien_tieu_thu > 10:
-                    _LOGGER.warning(
-                        f"Tiêu thụ ngày {ngay} có vẻ cao: {dien_tieu_thu} kWh. "
-                        f"Chi so: {chi_so}, Prev chi so: {prev_chi_so}, "
-                        f"From API: {record.get('DIEN_TIEU_THU') or record.get('Tong')}"
-                    )
 
                 # COALESCE: không ghi đè giá trị đã có bằng NULL. Cần thiết vì
                 # ngày đầu mỗi cửa sổ làm mới không có ngày liền trước để tính
