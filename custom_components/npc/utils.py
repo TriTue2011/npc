@@ -383,6 +383,64 @@ def layhoadon_tatca(userevn):
     return rows
 
 
+def lay_thongbao(userevn, loai=None, limit=5):
+    """Lấy thông báo app (mới nhất trước) cho userevn, lọc theo mục nếu có.
+
+    loai: None (mọi mục) hoặc một trong 'NGUNGCAP_DIEN' / 'HOADON' / 'TRUYEN_THONG'.
+    Trả về list dict {Tiêu đề, Nội dung, Thời gian, Đã đọc, Loại}.
+    """
+    try:
+        import os
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS notifications (
+                userevn TEXT,
+                notif_id TEXT,
+                loai TEXT,
+                tieu_de TEXT,
+                noi_dung TEXT,
+                thoi_gian TEXT,
+                da_doc INTEGER,
+                PRIMARY KEY (userevn, notif_id)
+            )
+        """)
+        if loai:
+            cursor.execute(
+                """
+                SELECT tieu_de, noi_dung, thoi_gian, da_doc, loai
+                FROM notifications WHERE userevn=? AND loai=?
+                ORDER BY thoi_gian DESC LIMIT ?
+                """,
+                (userevn, loai, limit),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT tieu_de, noi_dung, thoi_gian, da_doc, loai
+                FROM notifications WHERE userevn=?
+                ORDER BY thoi_gian DESC LIMIT ?
+                """,
+                (userevn, limit),
+            )
+        rows = cursor.fetchall()
+        conn.close()
+        return [
+            {
+                "Tiêu đề": r[0],
+                "Nội dung": r[1],
+                "Thời gian": r[2],
+                "Đã đọc": bool(r[3]),
+                "Loại": r[4],
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        _LOGGER.error(f"Error in lay_thongbao: {e}", exc_info=True)
+        return []
+
+
 def laylichcatdien(userevn):
     """Lấy lịch cắt điện từ database"""
     try:

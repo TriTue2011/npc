@@ -23,6 +23,13 @@ LOGIN_URL = "https://cskh.evn.com.vn/cskh/v1/auth/login"
 # cskh.evn.com.vn nên phải xác thực thẳng ở api.cskh.evnspc.vn
 SPC_LOGIN_URL = "https://api.cskh.evnspc.vn/api/user/authenticate"
 
+# Feed "Thông báo" dùng chung của app EVN (cùng cổng đăng nhập cskh.evn.com.vn).
+# Lịch ngừng cấp điện BÁO TRƯỚC chỉ xuất hiện ở đây; API tra cứu lịch ngừng cấp
+# điện (ngungcapdien) trả về rỗng với các đợt cắt được thông báo. getAllByUser
+# trả về mọi mã khách hàng của cùng số điện thoại nên phải lọc theo mã đang cấu
+# hình (xem coordinator._save_notification_outages).
+NOTIFICATION_URL = "https://cskh.evn.com.vn/cskh/v1/notification/getAllByUser"
+
 
 class EVNAPI:
     """EVN API Client"""
@@ -1170,4 +1177,59 @@ class EVNAPI:
 
         except Exception as e:
             _LOGGER.error(f"get_ngungcapdien error: {e}", exc_info=True)
+            return None
+
+
+    async def get_thongbao(self) -> Optional[list]:
+        """Lấy danh sách thông báo trong app EVN (gồm loại 'Ngừng cấp điện').
+
+        Chỉ chạy cho các region đăng nhập qua cổng chung cskh.evn.com.vn
+        (HN/NPC/CPC/HCMC). SPC có cổng riêng, token không dùng được ở feed này.
+
+        Returns:
+            Danh sách notification (list các dict), hoặc None nếu lỗi/không hỗ trợ.
+        """
+        if self.region == "SPC":
+            return None
+
+        if not self.access_token:
+            if not await self.login():
+                return None
+
+        try:
+            session = await self._get_session()
+            headers = {
+                "accept": "application/json, text/plain, */*",
+                "content-type": "application/json",
+                "user-agent": "okhttp/4.12.0",
+                "authorization": f"Bearer {self.access_token}",
+            }
+
+            async with session.post(
+                NOTIFICATION_URL, json={}, headers=headers, ssl=False
+            ) as resp:
+                if resp.status == 401:
+                    if await self.login():
+                        headers["authorization"] = f"Bearer {self.access_token}"
+                        async with session.post(
+                            NOTIFICATION_URL, json={}, headers=headers, ssl=False
+                        ) as retry_resp:
+                            if retry_resp.status != 200:
+                                _LOGGER.error(
+                                    f"get_thongbao failed with status {retry_resp.status}"
+                                )
+                                return None
+                            data = await retry_resp.json()
+                            return data.get("data") if isinstance(data, dict) else None
+                    return None
+
+                if resp.status != 200:
+                    _LOGGER.error(f"get_thongbao failed with status {resp.status}")
+                    return None
+
+                data = await resp.json()
+                return data.get("data") if isinstance(data, dict) else None
+
+        except Exception as e:
+            _LOGGER.error(f"get_thongbao error: {e}", exc_info=True)
             return None

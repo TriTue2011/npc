@@ -1,6 +1,7 @@
 """Data update coordinator for EVN VN"""
 
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 import sqlite3
@@ -115,12 +116,23 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 # Also save to monthly_bill table
                 await self._save_hoadon_to_monthly_bill(bill_data["data"])
 
-            # Fetch power outage schedule (from start date to today)
-            from_date = start_date.strftime("%d/%m/%Y")
-            to_date = today.strftime("%d/%m/%Y")
+            # Fetch power outage schedule.
+            # Lịch ngừng cấp điện là thông báo cho ngày SẮP TỚI, nên cửa sổ
+            # phải kéo tới tương lai; dừng ở hôm nay thì không bao giờ thấy
+            # đợt cắt điện được báo trước. Lùi 30 ngày để giữ lịch sử gần đây.
+            from_date = (today - timedelta(days=30)).strftime("%d/%m/%Y")
+            to_date = (today + timedelta(days=30)).strftime("%d/%m/%Y")
             outage_data = await self.api.get_ngungcapdien(from_date, to_date)
             if outage_data and outage_data.get("data"):
                 await self._save_outage_data(outage_data["data"])
+
+            # Lịch ngừng cấp điện BÁO TRƯỚC không nằm trong API tra cứu ở trên
+            # (nó trả về rỗng); EVN chỉ đẩy vào feed "Thông báo" của app. Lấy
+            # thêm từ đó rồi gộp vào cùng bảng để sensor lich_cat_dien đọc được.
+            notifications = await self.api.get_thongbao()
+            if notifications:
+                await self._save_notification_outages(notifications)
+                await self._save_notifications(notifications)
 
             # Return summary data
             return {
@@ -563,6 +575,123 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
         except Exception as e:
             _LOGGER.error(f"Error saving outage data: {e}", exc_info=True)
+
+    def _parse_outage_notification(self, summary: str) -> Optional[Dict]:
+        """Tách thông tin lịch cắt điện từ nội dung một thông báo.
+
+        Ví dụ nội dung: "... khách hàng có mã PM11000048612 thuộc ĐZ 35kV lộ
+        373E8.22 thời điểm từ 05h00 đến 11h30 ngày 28/8/2026 để ĐL Kim Thành
+        sửa chữa ...". Trả về dict theo standard format của _save_outage_data,
+        hoặc None nếu thiếu ngày/giờ (không dựng được lịch).
+        """
+        if not summary:
+            return None
+
+        date_m = re.search(r"ngày\s+(\d{1,2})/(\d{1,2})/(\d{4})", summary)
+        time_m = re.search(
+            r"từ\s+(\d{1,2})h(\d{2})\s+đến\s+(\d{1,2})h(\d{2})", summary
+        )
+        if not (date_m and time_m):
+            return None
+
+        area_m = re.search(r"thuộc\s+(.+?)\s+thời điểm", summary)
+        reason_m = re.search(r"để\s+(.+?)(?:\s*\.\.\.|\s*$)", summary)
+
+        ngay = f"{int(date_m.group(1)):02d}/{int(date_m.group(2)):02d}/{date_m.group(3)}"
+        return {
+            "NGAY_BAT_DAU": ngay,
+            "NGAY_KET_THUC": ngay,
+            "THOI_GIAN_BAT_DAU": f"{int(time_m.group(1)):02d}:{time_m.group(2)}",
+            "THOI_GIAN_KET_THUC": f"{int(time_m.group(3)):02d}:{time_m.group(4)}",
+            "KHU_VUC": area_m.group(1).strip() if area_m else "",
+            "LY_DO": reason_m.group(1).strip() if reason_m else summary.strip(),
+        }
+
+    async def _save_notification_outages(self, notifications: list):
+        """Lọc thông báo loại 'Ngừng cấp điện' đúng mã khách hàng đang cấu hình
+        rồi lưu vào cùng bảng power_outage_schedule."""
+        records = []
+        for note in notifications:
+            if not isinstance(note, dict):
+                continue
+            if note.get("notificationType") != "NGUNGCAP_DIEN":
+                continue
+            summary = note.get("summary") or ""
+            # Feed trả về mọi mã của cùng số điện thoại; chỉ giữ đúng mã này.
+            if self.customer_id and self.customer_id not in summary:
+                continue
+            record = self._parse_outage_notification(summary)
+            if record:
+                records.append(record)
+
+        if records:
+            await self._save_outage_data(records)
+            _LOGGER.info(
+                f"Đã lưu {len(records)} lịch cắt điện từ thông báo cho {self.customer_id}"
+            )
+
+    @staticmethod
+    def _notification_category(notif_type: str) -> str:
+        """Gom notificationType của feed về đúng 3 mục app: Hóa đơn / Truyền
+        thông / Ngừng điện. Feed dùng 'HOADON_TBAO_TTOAN' cho hóa đơn nên gom
+        theo tiền tố."""
+        t = (notif_type or "").upper()
+        if t.startswith("NGUNGCAP_DIEN"):
+            return "NGUNGCAP_DIEN"
+        if t.startswith("HOADON"):
+            return "HOADON"
+        if t.startswith("TRUYEN_THONG"):
+            return "TRUYEN_THONG"
+        return t or "KHAC"
+
+    async def _save_notifications(self, notifications: list):
+        """Lưu thông báo app (đã lọc theo mã khách hàng) vào bảng notifications
+        để các sensor thông báo đọc tin mới nhất từng mục."""
+        try:
+            os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS notifications (
+                    userevn TEXT,
+                    notif_id TEXT,
+                    loai TEXT,
+                    tieu_de TEXT,
+                    noi_dung TEXT,
+                    thoi_gian TEXT,
+                    da_doc INTEGER,
+                    PRIMARY KEY (userevn, notif_id)
+                )
+            """)
+
+            count = 0
+            for note in notifications:
+                if not isinstance(note, dict):
+                    continue
+                summary = note.get("summary") or ""
+                # Feed trả về mọi mã của cùng số điện thoại: bỏ tin gắn mã KHÁC,
+                # giữ tin không gắn mã nào (thông báo chung, ví dụ truyền thông).
+                if re.search(r"P[A-Z]\d{6,}", summary) and \
+                        self.customer_id and self.customer_id not in summary:
+                    continue
+                loai = self._notification_category(note.get("notificationType"))
+                cursor.execute("""
+                    INSERT OR REPLACE INTO notifications
+                    (userevn, notif_id, loai, tieu_de, noi_dung, thoi_gian, da_doc)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    self.customer_id, note.get("id"), loai, note.get("title"),
+                    summary, note.get("createdDate"),
+                    1 if note.get("readStatus") else 0,
+                ))
+                count += 1
+
+            conn.commit()
+            conn.close()
+            _LOGGER.debug(f"Đã lưu {count} thông báo cho {self.customer_id}")
+
+        except Exception as e:
+            _LOGGER.error(f"Error saving notifications: {e}", exc_info=True)
 
     def _parse_date(self, record: Dict) -> str:
         """Parse date from record to dd-mm-yyyy format."""

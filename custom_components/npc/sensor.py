@@ -9,7 +9,7 @@ from .const import DOMAIN, CONF_CUSTOMER_ID, CONF_NGAYDAUKY
 from .utils import tinhngaydauky, laychisongay, laydientieuthungay, \
     laydientieuthuthang, laykhoangtieuthukynay, tinhtiendien, \
     layhoadon, set_lancapnhapcuoi, get_lancapnhapcuoi, \
-    laylichcatdien, laychisongaygannhat
+    laylichcatdien, laychisongaygannhat, lay_thongbao
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,7 +36,8 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         "tieu_thu_hom_nay", "tieu_thu_hom_qua", "tieu_thu_hom_kia",
         "chi_tiet_dien_tieu_thu_ky_nay", "tien_dien_san_luong_nam_nay",
         "lich_cat_dien", "lan_cap_nhat_cuoi", "tien_no",
-        "thong_tin_khach_hang"
+        "thong_tin_khach_hang",
+        "thong_bao_ngung_dien", "thong_bao_hoa_don", "thong_bao_truyen_thong"
     ]
     entities = []
     for sensor_type in SENSOR_TYPES:
@@ -66,6 +67,16 @@ VIETNAMESE_NAMES = {
     "lan_cap_nhat_cuoi": "Update Last",
     "tien_no": "Tiền nợ",
     "thong_tin_khach_hang": "Thông tin khách hàng",
+    "thong_bao_ngung_dien": "Thông báo ngừng điện",
+    "thong_bao_hoa_don": "Thông báo hóa đơn",
+    "thong_bao_truyen_thong": "Thông báo truyền thông",
+}
+
+# sensor_type -> mục thông báo trong feed app
+NOTIF_SENSOR_CATEGORY = {
+    "thong_bao_ngung_dien": "NGUNGCAP_DIEN",
+    "thong_bao_hoa_don": "HOADON",
+    "thong_bao_truyen_thong": "TRUYEN_THONG",
 }
 
 
@@ -726,6 +737,25 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
                 "Khu vực": getattr(api, "region", None),
             }
             return getattr(api, "ten_khang", None) or self._userevn
+        # Thông báo theo mục (Ngừng điện / Hóa đơn / Truyền thông): tin mới
+        # nhất làm state để lịch sử/hoạt động của HA tự dựng, kèm 5 tin gần đây.
+        if self._sensor_type in NOTIF_SENSOR_CATEGORY:
+            loai = NOTIF_SENSOR_CATEGORY[self._sensor_type]
+            items = lay_thongbao(self._userevn, loai, 5)
+            if items:
+                latest = items[0]
+                self._attributes = {
+                    "Tiêu đề": latest["Tiêu đề"],
+                    "Thời gian": latest["Thời gian"],
+                    "Đã đọc": latest["Đã đọc"],
+                    "Nội dung": latest["Nội dung"],
+                    "Gần đây": items,
+                }
+                # State của HA giới hạn 255 ký tự; nội dung dài thì cắt bớt.
+                noi_dung = latest["Nội dung"] or latest["Tiêu đề"] or ""
+                return noi_dung[:255]
+            self._attributes = {"Gần đây": []}
+            return "Chưa có thông báo"
         # Tiền nợ
         if self._sensor_type == "tien_no":
             from .utils import lay_tien_no_evn
@@ -756,7 +786,10 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
             "tien_dien_san_luong_nam_nay": "mdi:calendar-month",
             "tien_no": "mdi:cash-multiple",
             "lich_cat_dien": "mdi:calendar-alert",
-            "thong_tin_khach_hang": "mdi:account-box"
+            "thong_tin_khach_hang": "mdi:account-box",
+            "thong_bao_ngung_dien": "mdi:flash-off",
+            "thong_bao_hoa_don": "mdi:receipt-text",
+            "thong_bao_truyen_thong": "mdi:bullhorn"
         }
         return ICON_MAPPING.get(self._sensor_type, None)
 
@@ -774,7 +807,8 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
     def available(self) -> bool:
         """Return if entity is available."""
         # Lịch cắt điện luôn available, ngay cả khi không có data
-        if self._sensor_type == "lich_cat_dien":
+        if self._sensor_type in ("lich_cat_dien", "thong_bao_ngung_dien",
+                                 "thong_bao_hoa_don", "thong_bao_truyen_thong"):
             return True
         return self.coordinator.last_update_success
 
