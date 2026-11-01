@@ -1,11 +1,46 @@
 """API client for EVN VN (NPC, HN, CPC, SPC)"""
 
+import asyncio
 import logging
+import time
 import aiohttp
 import json
 from typing import Any, Dict, Optional
 
 _LOGGER = logging.getLogger(__name__)
+
+# Máy chủ EVN hay lỗi/bảo trì hàng giờ liền (log HA 31/10–01/11/2026: 15 giờ liên tiếp, mỗi giờ 3 lệnh gọi đều 500 hoặc trả trang HTML). Lỗi phía EVN không phải
+# lỗi của tích hợp: ghi gọn một dòng cảnh báo, mỗi endpoint chỉ nhắc lại sau _NHAC_LAI_GIAY, KHÔNG ghi payload/URL (chứa mã điểm đo của khách) và không in traceback.
+_NHAC_LAI_GIAY = 6 * 3600
+_LAN_BAO_CUOI: dict[str, float] = {}
+
+
+def _bao_loi_may_chu_evn(ten: str, chi_tiet: str) -> None:
+    bay_gio = time.monotonic()
+    if bay_gio - _LAN_BAO_CUOI.get(ten, -_NHAC_LAI_GIAY) < _NHAC_LAI_GIAY:
+        _LOGGER.debug("%s: máy chủ EVN vẫn lỗi (%s)", ten, chi_tiet)
+        return
+    _LAN_BAO_CUOI[ten] = bay_gio
+    _LOGGER.warning("%s: máy chủ EVN lỗi hoặc đang bảo trì (%s); dữ liệu cũ được giữ, thử lại ở chu kỳ sau "
+                    "(chỉ nhắc lại sau %d giờ nếu vẫn lỗi)", ten, chi_tiet, _NHAC_LAI_GIAY // 3600)
+
+
+def _ghi_loi_http(ten: str, status: int, noi_dung: str = "") -> None:
+    """Lỗi HTTP của một lệnh gọi EVN: 5xx = lỗi phía EVN (cảnh báo gọn, không lặp); còn lại (401 sau khi đăng nhập lại, 4xx…) vẫn là ERROR kèm đoạn đầu phản hồi."""
+    if status >= 500:
+        _bao_loi_may_chu_evn(ten, f"HTTP {status}")
+    else:
+        _LOGGER.error("%s failed with status %s, response: %s", ten, status, noi_dung[:300])
+
+
+def _ghi_ngoai_le(ten: str, loi: Exception) -> None:
+    """Ngoại lệ ngoài cùng của một hàm lấy dữ liệu. Lỗi mạng/trả sai kiểu (EVN trả HTML) là lỗi phía EVN; còn lại là lỗi thật, giữ traceback."""
+    if isinstance(loi, aiohttp.ContentTypeError):
+        _bao_loi_may_chu_evn(ten, "trả trang HTML thay vì JSON")
+    elif isinstance(loi, (aiohttp.ClientError, asyncio.TimeoutError)):
+        _bao_loi_may_chu_evn(ten, type(loi).__name__)
+    else:
+        _LOGGER.error("%s error: %s", ten, loi, exc_info=True)
 
 # Base URLs for different regions
 EVN_REGIONS = {
@@ -660,7 +695,7 @@ class EVNAPI:
                 async with session.post(url, data=payload, headers=headers, ssl=False) as resp:
                     if resp.status != 200:
                         error_text = await resp.text()
-                        _LOGGER.error(f"get_chisongay failed with status {resp.status}, URL={url}, payload={payload}, response: {error_text[:500]}")
+                        _ghi_loi_http("get_chisongay", resp.status, error_text)
                         return None
                     
                     # HCMC API trả về JSON nhưng Content-Type là text/html
@@ -712,7 +747,7 @@ class EVNAPI:
                             async with session.get(url, params=params, headers=headers, ssl=False) as retry_resp:
                                 if retry_resp.status != 200:
                                     error_text = await retry_resp.text()
-                                    _LOGGER.error(f"get_chisongay failed with status {retry_resp.status}, response: {error_text[:500]}")
+                                    _ghi_loi_http("get_chisongay", retry_resp.status, error_text)
                                     return None
                                 data = await retry_resp.json()
                                 # SPC trả về list trực tiếp, chuyển đổi format và wrap vào dict với key "data"
@@ -724,7 +759,7 @@ class EVNAPI:
 
                     if resp.status != 200:
                         error_text = await resp.text()
-                        _LOGGER.error(f"get_chisongay failed with status {resp.status}, URL={url}, params={params}, response: {error_text[:500]}")
+                        _ghi_loi_http("get_chisongay", resp.status, error_text)
                         return None
 
                     data = await resp.json()
@@ -764,20 +799,20 @@ class EVNAPI:
                             async with session.post(url, json=payload, headers=headers, ssl=False) as retry_resp:
                                 if retry_resp.status != 200:
                                     error_text = await retry_resp.text()
-                                    _LOGGER.error(f"get_chisongay failed with status {retry_resp.status}, response: {error_text[:500]}")
+                                    _ghi_loi_http("get_chisongay", retry_resp.status, error_text)
                                     return None
                                 return await retry_resp.json()
                         return None
 
                     if resp.status != 200:
                         error_text = await resp.text()
-                        _LOGGER.error(f"get_chisongay failed with status {resp.status}, URL={url}, payload={payload}, response: {error_text[:500]}")
+                        _ghi_loi_http("get_chisongay", resp.status, error_text)
                         return None
 
                     return await resp.json()
 
         except Exception as e:
-            _LOGGER.error(f"get_chisongay error: {e}", exc_info=True)
+            _ghi_ngoai_le("get_chisongay", e)
             return None
 
     async def get_chisothang(
@@ -904,19 +939,19 @@ class EVNAPI:
                             headers["authorization"] = f"Bearer {self.access_token}"
                             async with session.post(url, json=payload, headers=headers, ssl=False) as retry_resp:
                                 if retry_resp.status != 200:
-                                    _LOGGER.error(f"get_chisothang failed with status {retry_resp.status}")
+                                    _ghi_loi_http("get_chisothang", retry_resp.status)
                                     return None
                                 return await retry_resp.json()
                         return None
 
                     if resp.status != 200:
-                        _LOGGER.error(f"get_chisothang failed with status {resp.status}")
+                        _ghi_loi_http("get_chisothang", resp.status)
                         return None
 
                     return await resp.json()
 
         except Exception as e:
-            _LOGGER.error(f"get_chisothang error: {e}", exc_info=True)
+            _ghi_ngoai_le("get_chisothang", e)
             return None
 
     async def get_hoadon(self) -> Optional[Dict[str, Any]]:
@@ -957,7 +992,7 @@ class EVNAPI:
                 async with session.post(url, data=payload, headers=headers, ssl=False) as resp:
                     if resp.status != 200:
                         error_text = await resp.text()
-                        _LOGGER.error(f"get_hoadon failed with status {resp.status}, URL={url}, payload={payload}, response: {error_text[:500]}")
+                        _ghi_loi_http("get_hoadon", resp.status, error_text)
                         return None
                     
                     # HCMC API trả về JSON nhưng Content-Type là text/html
@@ -1012,7 +1047,7 @@ class EVNAPI:
                             async with session.get(url, params=params, headers=headers, ssl=False) as retry_resp:
                                 if retry_resp.status != 200:
                                     error_text = await retry_resp.text()
-                                    _LOGGER.error(f"get_hoadon failed with status {retry_resp.status}, response: {error_text[:500]}")
+                                    _ghi_loi_http("get_hoadon", retry_resp.status, error_text)
                                     return None
                                 data = await retry_resp.json()
                                 # SPC trả về list trực tiếp, wrap vào dict với key "data"
@@ -1023,7 +1058,7 @@ class EVNAPI:
 
                     if resp.status != 200:
                         error_text = await resp.text()
-                        _LOGGER.error(f"get_hoadon failed with status {resp.status}, URL={url}, params={params}, response: {error_text[:500]}")
+                        _ghi_loi_http("get_hoadon", resp.status, error_text)
                         return None
 
                     data = await resp.json()
@@ -1048,19 +1083,19 @@ class EVNAPI:
                             headers["authorization"] = f"Bearer {self.access_token}"
                             async with session.post(url, headers=headers, ssl=False) as retry_resp:
                                 if retry_resp.status != 200:
-                                    _LOGGER.error(f"get_hoadon failed with status {retry_resp.status}")
+                                    _ghi_loi_http("get_hoadon", retry_resp.status)
                                     return None
                                 return await retry_resp.json()
                         return None
 
                     if resp.status != 200:
-                        _LOGGER.error(f"get_hoadon failed with status {resp.status}")
+                        _ghi_loi_http("get_hoadon", resp.status)
                         return None
 
                     return await resp.json()
 
         except Exception as e:
-            _LOGGER.error(f"get_hoadon error: {e}", exc_info=True)
+            _ghi_ngoai_le("get_hoadon", e)
             return None
 
     async def get_ngungcapdien(
@@ -1109,7 +1144,7 @@ class EVNAPI:
                             async with session.get(url, params=params, headers=headers, ssl=False) as retry_resp:
                                 if retry_resp.status != 200:
                                     error_text = await retry_resp.text()
-                                    _LOGGER.error(f"get_ngungcapdien failed with status {retry_resp.status}, response: {error_text[:500]}")
+                                    _ghi_loi_http("get_ngungcapdien", retry_resp.status, error_text)
                                     return None
                                 data = await retry_resp.json()
                                 # SPC trả về list trực tiếp, chuyển đổi format và wrap vào dict với key "data"
@@ -1121,7 +1156,7 @@ class EVNAPI:
 
                     if resp.status != 200:
                         error_text = await resp.text()
-                        _LOGGER.error(f"get_ngungcapdien failed with status {resp.status}, URL={url}, params={params}, response: {error_text[:500]}")
+                        _ghi_loi_http("get_ngungcapdien", resp.status, error_text)
                         return None
 
                     data = await resp.json()
@@ -1152,7 +1187,7 @@ class EVNAPI:
                             headers["authorization"] = f"Bearer {self.access_token}"
                             async with session.post(url, json=payload, headers=headers, ssl=False) as retry_resp:
                                 if retry_resp.status != 200:
-                                    _LOGGER.error(f"get_ngungcapdien failed with status {retry_resp.status}")
+                                    _ghi_loi_http("get_ngungcapdien", retry_resp.status)
                                     return None
                                 data = await retry_resp.json()
                                 # Chuyển đổi format cho CPC
@@ -1164,7 +1199,7 @@ class EVNAPI:
                         return None
 
                     if resp.status != 200:
-                        _LOGGER.error(f"get_ngungcapdien failed with status {resp.status}")
+                        _ghi_loi_http("get_ngungcapdien", resp.status)
                         return None
 
                     data = await resp.json()
@@ -1176,7 +1211,7 @@ class EVNAPI:
                     return data
 
         except Exception as e:
-            _LOGGER.error(f"get_ngungcapdien error: {e}", exc_info=True)
+            _ghi_ngoai_le("get_ngungcapdien", e)
             return None
 
 
@@ -1224,12 +1259,12 @@ class EVNAPI:
                     return None
 
                 if resp.status != 200:
-                    _LOGGER.error(f"get_thongbao failed with status {resp.status}")
+                    _ghi_loi_http("get_thongbao", resp.status)
                     return None
 
                 data = await resp.json()
                 return data.get("data") if isinstance(data, dict) else None
 
         except Exception as e:
-            _LOGGER.error(f"get_thongbao error: {e}", exc_info=True)
+            _ghi_ngoai_le("get_thongbao", e)
             return None
