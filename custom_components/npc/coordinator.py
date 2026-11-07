@@ -579,30 +579,61 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
     def _parse_outage_notification(self, summary: str) -> Optional[Dict]:
         """Tách thông tin lịch cắt điện từ nội dung một thông báo.
 
-        Ví dụ nội dung: "... khách hàng có mã PM11000048612 thuộc ĐZ 35kV lộ
-        373E8.22 thời điểm từ 05h00 đến 11h30 ngày 28/8/2026 để ĐL Kim Thành
-        sửa chữa ...". Trả về dict theo standard format của _save_outage_data,
-        hoặc None nếu thiếu ngày/giờ (không dựng được lịch).
+        Hai mẫu đã gặp:
+        - Mẫu cũ: "... thuộc ĐZ 35kV lộ 373E8.22 thời điểm từ 05h00 đến 11h30
+          ngày 28/8/2026 để ĐL Kim Thành sửa chữa ...".
+        - Mẫu mới (từ 11/2026): "... sẽ tạm ngừng cấp điện tại địa chỉ của
+          Quý khách từ 08:00 10-11-2026. Thời gian dự kiến cấp điện trở lại:
+          17:00 10-11-2026 ...".
+        Trả về dict theo standard format của _save_outage_data, hoặc None nếu
+        thiếu ngày/giờ (không dựng được lịch).
         """
         if not summary:
             return None
 
+        # Ngày: mẫu cũ "ngày 28/8/2026", mẫu mới "10-11-2026".
         date_m = re.search(r"ngày\s+(\d{1,2})/(\d{1,2})/(\d{4})", summary)
+        if date_m:
+            d, m, y = date_m.group(1), date_m.group(2), date_m.group(3)
+        else:
+            date_m = re.search(r"(\d{1,2})-(\d{1,2})-(\d{4})", summary)
+            if not date_m:
+                return None
+            d, m, y = date_m.group(1), date_m.group(2), date_m.group(3)
+
+        # Giờ: mẫu cũ "từ 05h00 đến 11h30", mẫu mới "từ 08:00" +
+        # "cấp điện trở lại: 17:00".
         time_m = re.search(
             r"từ\s+(\d{1,2})h(\d{2})\s+đến\s+(\d{1,2})h(\d{2})", summary
         )
-        if not (date_m and time_m):
-            return None
+        if time_m:
+            sh, sm, eh, em = (
+                time_m.group(1),
+                time_m.group(2),
+                time_m.group(3),
+                time_m.group(4),
+            )
+        else:
+            start_m = re.search(r"từ\s+(\d{1,2}):(\d{2})", summary)
+            end_m = re.search(r"cấp điện trở lại:\s*(\d{1,2}):(\d{2})", summary)
+            if not (start_m and end_m):
+                return None
+            sh, sm, eh, em = (
+                start_m.group(1),
+                start_m.group(2),
+                end_m.group(1),
+                end_m.group(2),
+            )
 
         area_m = re.search(r"thuộc\s+(.+?)\s+thời điểm", summary)
         reason_m = re.search(r"để\s+(.+?)(?:\s*\.\.\.|\s*$)", summary)
 
-        ngay = f"{int(date_m.group(1)):02d}/{int(date_m.group(2)):02d}/{date_m.group(3)}"
+        ngay = f"{int(d):02d}/{int(m):02d}/{y}"
         return {
             "NGAY_BAT_DAU": ngay,
             "NGAY_KET_THUC": ngay,
-            "THOI_GIAN_BAT_DAU": f"{int(time_m.group(1)):02d}:{time_m.group(2)}",
-            "THOI_GIAN_KET_THUC": f"{int(time_m.group(3)):02d}:{time_m.group(4)}",
+            "THOI_GIAN_BAT_DAU": f"{int(sh):02d}:{sm}",
+            "THOI_GIAN_KET_THUC": f"{int(eh):02d}:{em}",
             "KHU_VUC": area_m.group(1).strip() if area_m else "",
             "LY_DO": reason_m.group(1).strip() if reason_m else summary.strip(),
         }
