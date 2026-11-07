@@ -3,7 +3,7 @@ from homeassistant.const import STATE_UNKNOWN
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 from calendar import monthrange
-from datetime import timedelta, datetime
+from datetime import time, timedelta, datetime
 import logging
 from .const import DOMAIN, CONF_CUSTOMER_ID, CONF_NGAYDAUKY
 from .utils import tinhngaydauky, laychisongay, laydientieuthungay, \
@@ -12,6 +12,38 @@ from .utils import tinhngaydauky, laychisongay, laydientieuthungay, \
     laylichcatdien, laychisongaygannhat, lay_thongbao
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _parse_gio_bat_dau(gio_str):
+    """Parse giờ bắt đầu dạng 'HH:MM' (chấp nhận 'H:MM', 'HHhMM').
+
+    Lỗi/thiếu -> time.min (00:00) để thứ tự vẫn xác định. Mọi bản ghi
+    từ parser đều có giờ 'HH:MM' hợp lệ nên fallback này chỉ là phòng thủ.
+    """
+    if not gio_str:
+        return time.min
+    s = str(gio_str).strip()
+    for fmt in ("%H:%M", "%Hh%M"):
+        try:
+            return datetime.strptime(s, fmt).time()
+        except (ValueError, TypeError):
+            continue
+    return time.min
+
+
+def _khoa_sap_xep_lich(event):
+    """Khóa sắp xếp một đợt cắt điện: (ngày, giờ bắt đầu).
+
+    Trước đây sensor chỉ sắp theo ngày nên hai đợt cùng ngày giữ nguyên
+    thứ tự chèn (đợt 15:00 có thể đứng trước đợt 06:00) và state lấy
+    nhầm đợt muộn hơn. Sắp theo (ngày, giờ bắt đầu) để đợt sớm nhất
+    lên đầu; ngày parse lỗi -> xếp cuối.
+    """
+    try:
+        ngay = datetime.strptime(event.get("Ngày") or "", "%d-%m-%Y")
+    except (ValueError, TypeError):
+        ngay = datetime.max
+    return (ngay, _parse_gio_bat_dau(event.get("Thời gian từ")))
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
@@ -682,17 +714,16 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
                         _LOGGER.warning(f"Error parsing date '{event.get('Ngày')}' in lich_cat_dien: {e}")
                         continue
                 
-                future_events.sort(key=lambda x: datetime.strptime(x["Ngày"], "%d-%m-%Y"))
-                past_events.sort(key=lambda x: datetime.strptime(x["Ngày"], "%d-%m-%Y"), reverse=True)
+                future_events.sort(key=_khoa_sap_xep_lich)
+                past_events.sort(key=_khoa_sap_xep_lich, reverse=True)
                 self._attributes = {
                     "Tương Lai": future_events,
                     "Quá Khứ": past_events
                 }
                 if future_events:
-                    earliest_event = min(
-                        future_events,
-                        key=lambda x: datetime.strptime(x["Ngày"], "%d-%m-%Y")
-                    )
+                    # future_events đã sắp theo (ngày, giờ bắt đầu)
+                    # nên [0] là đợt sớm nhất (không chỉ cùng ngày).
+                    earliest_event = future_events[0]
                     self._attributes.update({
                         "Ngày": earliest_event["Ngày"],
                         "Thời gian từ": earliest_event["Thời gian từ"],
