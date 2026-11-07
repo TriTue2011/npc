@@ -660,8 +660,36 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             return None
         sh, sm, eh, em = time_pair
 
+        area = ""
         area_m = re.search(r"thuộc\s+(.+?)\s+thời điểm", summary)
+        if area_m:
+            area = area_m.group(1).strip()
+        else:
+            # Mẫu mới không có "thuộc ... thời điểm": lấy địa chỉ sau
+            # "Địa chỉ:" tới " - Mã khách hàng:" (vd "Cột 2.11/1.2 -
+            # TBA La Khê 2, Xã Vĩnh Lại, Tp Hải Phòng"). Không có thì
+            # để rỗng, không bịa.
+            addr_m = re.search(
+                r"Địa chỉ:\s*(.+?)\s*-\s*Mã khách hàng", summary
+            )
+            if addr_m:
+                area = addr_m.group(1).strip()
+
+        # Lý do: mẫu cũ "để <lý do> ..."; mẫu mới "Do <lý do>, Điện lực
+        # sẽ ..." (vd "Do công việc bảo trì sửa chữa lưới điện").
+        # Không có thì giữ nguyên toàn bộ nội dung (hành vi cũ).
+        reason = ""
         reason_m = re.search(r"để\s+(.+?)(?:\s*\.\.\.|\s*$)", summary)
+        if reason_m:
+            reason = reason_m.group(1).strip()
+        else:
+            do_m = re.search(r"\bDo\s+(.+?)\s*,\s*Điện lực sẽ", summary)
+            if do_m:
+                cand = "Do " + do_m.group(1).strip()
+                if len(cand) <= 200:
+                    reason = cand
+        if not reason:
+            reason = summary.strip()
 
         ngay = f"{int(d):02d}/{int(m):02d}/{y}"
         return {
@@ -669,8 +697,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             "NGAY_KET_THUC": ngay,
             "THOI_GIAN_BAT_DAU": f"{int(sh):02d}:{sm}",
             "THOI_GIAN_KET_THUC": f"{int(eh):02d}:{em}",
-            "KHU_VUC": area_m.group(1).strip() if area_m else "",
-            "LY_DO": reason_m.group(1).strip() if reason_m else summary.strip(),
+            "KHU_VUC": area,
+            "LY_DO": reason,
         }
 
     async def _save_notification_outages(self, notifications: list):
