@@ -65,6 +65,12 @@ SPC_LOGIN_URL = "https://api.cskh.evnspc.vn/api/user/authenticate"
 # hình (xem coordinator._save_notification_outages).
 NOTIFICATION_URL = "https://cskh.evn.com.vn/cskh/v1/notification/getAllByUser"
 
+# Chi tiết một thông báo: nội dung đầy đủ nằm ở data.body (HTML).
+# Feed getAllByUser chỉ trả summary là bản xem trước bị cắt ngắn (~200 ký tự),
+# nên khi parse summary không ra ngày/giờ thì gọi thêm endpoint này để lấy
+# toàn bộ nội dung rồi parse lại (xem coordinator._save_notification_outages).
+NOTIFICATION_DETAIL_URL = "https://cskh.evn.com.vn/cskh/v1/customer/notificationDetail"
+
 
 class EVNAPI:
     """EVN API Client"""
@@ -1267,4 +1273,66 @@ class EVNAPI:
 
         except Exception as e:
             _ghi_ngoai_le("get_thongbao", e)
+            return None
+
+    async def get_notification_detail(self, notif_id) -> Optional[dict]:
+        """Lấy nội dung đầy đủ của một thông báo theo id.
+
+        Chỉ chạy cho các region đăng nhập qua cổng chung cskh.evn.com.vn
+        (HN/NPC/CPC/HCMC). SPC có cổng riêng, token không dùng được ở đây.
+
+        App EVN chỉ gọi endpoint này khi body trong feed trống; nội dung đầy
+        đủ nằm ở data.body (HTML). Feed getAllByUser trả summary là bản xem
+        trước bị cắt ngắn nên ngày/giờ cắt điện có thể nằm ngoài summary.
+
+        Args:
+            notif_id: trường `id` của tin trong feed (số hoặc chuỗi).
+
+        Returns:
+            Dict `data` của response (có trường `body` là HTML nội dung đầy
+            đủ), hoặc None nếu lỗi/không hỗ trợ.
+        """
+        if self.region == "SPC":
+            return None
+
+        if not self.access_token:
+            if not await self.login():
+                return None
+
+        url = f"{NOTIFICATION_DETAIL_URL}/{notif_id}"
+
+        try:
+            session = await self._get_session()
+            headers = {
+                "accept": "application/json, text/plain, */*",
+                "content-type": "application/json",
+                "user-agent": "okhttp/4.12.0",
+                "authorization": f"Bearer {self.access_token}",
+            }
+
+            async with session.get(url, headers=headers, ssl=False) as resp:
+                if resp.status == 401:
+                    if await self.login():
+                        headers["authorization"] = f"Bearer {self.access_token}"
+                        async with session.get(
+                            url, headers=headers, ssl=False
+                        ) as retry_resp:
+                            if retry_resp.status != 200:
+                                _LOGGER.error(
+                                    f"get_notification_detail failed with status {retry_resp.status}"
+                                )
+                                return None
+                            data = await retry_resp.json()
+                            return data.get("data") if isinstance(data, dict) else None
+                    return None
+
+                if resp.status != 200:
+                    _ghi_loi_http("get_notification_detail", resp.status)
+                    return None
+
+                data = await resp.json()
+                return data.get("data") if isinstance(data, dict) else None
+
+        except Exception as e:
+            _ghi_ngoai_le("get_notification_detail", e)
             return None

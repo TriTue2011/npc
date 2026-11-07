@@ -640,7 +640,13 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _save_notification_outages(self, notifications: list):
         """Lọc thông báo loại 'Ngừng cấp điện' đúng mã khách hàng đang cấu hình
-        rồi lưu vào cùng bảng power_outage_schedule."""
+        rồi lưu vào cùng bảng power_outage_schedule.
+
+        Summary trong feed là bản xem trước bị cắt ngắn (~200 ký tự); tin mẫu
+        mới viết ngày/giờ ở sau chỗ bị cắt nên parse summary không ra. Khi đó
+        gọi thêm endpoint detail để lấy nội dung đầy đủ (data.body, HTML) rồi
+        parse lại. Chỉ gọi detail khi summary parse thất bại.
+        """
         records = []
         for note in notifications:
             if not isinstance(note, dict):
@@ -652,6 +658,8 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             if self.customer_id and self.customer_id not in summary:
                 continue
             record = self._parse_outage_notification(summary)
+            if record is None:
+                record = await self._parse_notification_detail(note)
             if record:
                 records.append(record)
 
@@ -660,6 +668,28 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.info(
                 f"Đã lưu {len(records)} lịch cắt điện từ thông báo cho {self.customer_id}"
             )
+
+    async def _parse_notification_detail(self, note: dict) -> Optional[Dict]:
+        """Lấy nội dung đầy đủ của một tin qua endpoint detail rồi parse.
+
+        Chỉ dùng khi parse summary thất bại. Mọi lỗi (không có id, detail lỗi,
+        không có body, vẫn không parse được) đều trả None một cách lặng lẽ để
+        không làm hỏng cả đợt cập nhật.
+        """
+        notif_id = note.get("id")
+        if notif_id is None:
+            return None
+        try:
+            detail = await self.api.get_notification_detail(notif_id)
+        except Exception:
+            return None
+        if not isinstance(detail, dict):
+            return None
+        body = detail.get("body") or ""
+        if not body:
+            return None
+        text = re.sub(r"<[^>]*>", "", body)
+        return self._parse_outage_notification(text)
 
     @staticmethod
     def _notification_category(notif_type: str) -> str:
