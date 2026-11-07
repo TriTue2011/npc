@@ -1294,9 +1294,10 @@ class EVNAPI:
         if "data" in data:
             payload = data["data"]
             co_body = (isinstance(payload, dict) and "body" in payload) or isinstance(payload, str)
+            data_keys = sorted(payload.keys()) if isinstance(payload, dict) else []
             _LOGGER.warning(
-                "npc detail: HTTP %s, keys=%s, data type=%s, co body=%s",
-                status, keys, type(payload).__name__, co_body,
+                "npc detail: HTTP %s, keys=%s, data type=%s, co body=%s, data keys=%s",
+                status, keys, type(payload).__name__, co_body, data_keys,
             )
             return payload
         _LOGGER.warning(
