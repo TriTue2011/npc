@@ -1275,7 +1275,37 @@ class EVNAPI:
             _ghi_ngoai_le("get_thongbao", e)
             return None
 
-    async def get_notification_detail(self, notif_id) -> Optional[dict]:
+    @staticmethod
+    def _trich_detail(data: Any, status: int) -> Optional[Any]:
+        """Trích payload detail từ JSON trả về, ghi log dạng dữ liệu nhận được.
+
+        Dạng chuẩn theo disassembly: {"data": {..., "body": ...}}. Chưa xác
+        minh bằng gọi thật nên nhận cả dạng không có wrapper "data" (JSON
+        chính là dict chứa "body"). Chỉ ghi tên khóa (schema) và kiểu dữ
+        liệu, không ghi giá trị, nên không lộ nội dung tin.
+        """
+        if not isinstance(data, dict):
+            _LOGGER.warning(
+                "npc detail: HTTP %s, response khong phai dict (type=%s), bo qua",
+                status, type(data).__name__,
+            )
+            return None
+        keys = sorted(data.keys())
+        if "data" in data:
+            payload = data["data"]
+            co_body = (isinstance(payload, dict) and "body" in payload) or isinstance(payload, str)
+            _LOGGER.warning(
+                "npc detail: HTTP %s, keys=%s, data type=%s, co body=%s",
+                status, keys, type(payload).__name__, co_body,
+            )
+            return payload
+        _LOGGER.warning(
+            "npc detail: HTTP %s, keys=%s, khong co wrapper data, dung toan bo JSON",
+            status, keys,
+        )
+        return data
+
+    async def get_notification_detail(self, notif_id) -> Optional[Any]:
         """Lấy nội dung đầy đủ của một thông báo theo id.
 
         Chỉ chạy cho các region đăng nhập qua cổng chung cskh.evn.com.vn
@@ -1285,18 +1315,25 @@ class EVNAPI:
         đủ nằm ở data.body (HTML). Feed getAllByUser trả summary là bản xem
         trước bị cắt ngắn nên ngày/giờ cắt điện có thể nằm ngoài summary.
 
+        Dạng trả về chưa xác minh bằng gọi thật: thường là dict `data` (có
+        trường `body`), nhưng cũng nhận dict không có wrapper "data" hoặc
+        `data` là chuỗi HTML trực tiếp. Mỗi bước đều ghi log WARNING (để thấy
+        trong log HA mặc định) kèm lý do ngắn khi trả None.
+
         Args:
             notif_id: trường `id` của tin trong feed (số hoặc chuỗi).
 
         Returns:
             Dict `data` của response (có trường `body` là HTML nội dung đầy
-            đủ), hoặc None nếu lỗi/không hỗ trợ.
+            đủ), hoặc chuỗi HTML trực tiếp, hoặc None nếu lỗi/không hỗ trợ.
         """
         if self.region == "SPC":
+            _LOGGER.warning("npc detail: region SPC khong ho tro, bo qua")
             return None
 
         if not self.access_token:
             if not await self.login():
+                _LOGGER.warning("npc detail: khong co token, login that bai, bo qua")
                 return None
 
         url = f"{NOTIFICATION_DETAIL_URL}/{notif_id}"
@@ -1312,27 +1349,39 @@ class EVNAPI:
 
             async with session.get(url, headers=headers, ssl=False) as resp:
                 if resp.status == 401:
+                    _LOGGER.warning(
+                        "npc detail: HTTP 401, dang nhap lai va thu lai 1 lan"
+                    )
                     if await self.login():
                         headers["authorization"] = f"Bearer {self.access_token}"
                         async with session.get(
                             url, headers=headers, ssl=False
                         ) as retry_resp:
                             if retry_resp.status != 200:
-                                _LOGGER.error(
-                                    f"get_notification_detail failed with status {retry_resp.status}"
+                                _LOGGER.warning(
+                                    "npc detail: retry tra status %s, bo qua",
+                                    retry_resp.status,
+                                )
+                                _ghi_loi_http(
+                                    "get_notification_detail", retry_resp.status
                                 )
                                 return None
                             data = await retry_resp.json()
-                            return data.get("data") if isinstance(data, dict) else None
+                            return self._trich_detail(data, retry_resp.status)
+                    _LOGGER.warning("npc detail: 401 va login that bai, bo qua")
                     return None
 
                 if resp.status != 200:
+                    _LOGGER.warning("npc detail: HTTP %s, bo qua", resp.status)
                     _ghi_loi_http("get_notification_detail", resp.status)
                     return None
 
                 data = await resp.json()
-                return data.get("data") if isinstance(data, dict) else None
+                return self._trich_detail(data, resp.status)
 
         except Exception as e:
+            _LOGGER.warning(
+                "npc detail: exception %s, bo qua", type(e).__name__
+            )
             _ghi_ngoai_le("get_notification_detail", e)
             return None

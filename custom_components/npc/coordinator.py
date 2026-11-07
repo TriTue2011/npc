@@ -1,5 +1,6 @@
 """Data update coordinator for EVN VN"""
 
+import html
 import logging
 import re
 from datetime import datetime, timedelta
@@ -648,6 +649,7 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         parse lại. Chỉ gọi detail khi summary parse thất bại.
         """
         records = []
+        seen = 0
         for note in notifications:
             if not isinstance(note, dict):
                 continue
@@ -657,39 +659,118 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             # Feed trả về mọi mã của cùng số điện thoại; chỉ giữ đúng mã này.
             if self.customer_id and self.customer_id not in summary:
                 continue
+            seen += 1
             record = self._parse_outage_notification(summary)
             if record is None:
+                _LOGGER.warning(
+                    "npc detail fallback: summary khong ra ngay/gio, goi detail "
+                    "cho notification id=%s",
+                    note.get("id"),
+                )
                 record = await self._parse_notification_detail(note)
             if record:
                 records.append(record)
 
+        if seen:
+            _LOGGER.warning(
+                "npc lich cat dien: da xu ly %d thong bao ngung dien, luu %d lich",
+                seen, len(records),
+            )
         if records:
             await self._save_outage_data(records)
+            # Không ghi mã khách hàng vào log (mã điểm đo của khách).
             _LOGGER.info(
-                f"Đã lưu {len(records)} lịch cắt điện từ thông báo cho {self.customer_id}"
+                f"Đã lưu {len(records)} lịch cắt điện từ thông báo"
             )
+
+    @staticmethod
+    def _lay_body_tu_detail(detail) -> str:
+        """Trích nội dung HTML từ kết quả get_notification_detail.
+
+        Dạng trả về chưa xác minh bằng gọi thật nên nhận hết các dạng có thể:
+        dict có "body", dict lồng "data" chứa "body", chuỗi HTML trực tiếp,
+        hoặc dict dùng khóa "content". Trả "" nếu không trích được gì.
+        """
+        if isinstance(detail, str):
+            return detail
+        if not isinstance(detail, dict):
+            return ""
+        body = detail.get("body")
+        if isinstance(body, str) and body:
+            return body
+        nested = detail.get("data")
+        if isinstance(nested, dict):
+            body = nested.get("body")
+            if isinstance(body, str) and body:
+                return body
+        content = detail.get("content")
+        if isinstance(content, str) and content:
+            return content
+        return ""
+
+    @staticmethod
+    def _html_sang_text(body: str) -> str:
+        """Bóc thẻ HTML thành text thường để regex ngày/giờ đọc được.
+
+        Lỗi cũ (bản 2026.11.4): re.sub(r"<[^>]*>", "", body) xóa thẻ mà không
+        chèn khoảng trắng nên "từ<br/>08:00" thành "từ08:00" (regex từ\\s+
+        không khớp), và giữ nguyên thực thể &nbsp; (cũng không phải khoảng
+        trắng với regex). Sửa: thẻ khối -> khoảng trắng, thẻ nội tuyến ->
+        xóa, unescape thực thể rồi gộp khoảng trắng.
+        """
+        text = re.sub(
+            r"</?(?:br|p|div|li|ul|ol|tr|table|h[1-6]|section|article)[^>]*>",
+            " ",
+            body,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(r"<[^>]+>", "", text)
+        text = html.unescape(text)
+        return re.sub(r"\s+", " ", text).strip()
 
     async def _parse_notification_detail(self, note: dict) -> Optional[Dict]:
         """Lấy nội dung đầy đủ của một tin qua endpoint detail rồi parse.
 
-        Chỉ dùng khi parse summary thất bại. Mọi lỗi (không có id, detail lỗi,
-        không có body, vẫn không parse được) đều trả None một cách lặng lẽ để
-        không làm hỏng cả đợt cập nhật.
+        Chỉ dùng khi parse summary thất bại. Mọi lỗi đều trả None để không
+        làm hỏng cả đợt cập nhật; mỗi điểm dừng đều ghi log WARNING để thấy
+        được trong log HA mặc định (chẩn đoán bản 2026.11.5). Không ghi nội
+        dung tin/body vào log, chỉ ghi id tin, ngày/giờ cắt điện và độ dài.
         """
         notif_id = note.get("id")
         if notif_id is None:
+            _LOGGER.warning("npc detail: tin ngung dien khong co id, bo qua detail")
             return None
         try:
             detail = await self.api.get_notification_detail(notif_id)
-        except Exception:
+        except Exception as exc:
+            _LOGGER.warning(
+                "npc detail: goi detail id=%s loi %s, bo qua",
+                notif_id, type(exc).__name__,
+            )
             return None
-        if not isinstance(detail, dict):
-            return None
-        body = detail.get("body") or ""
+        body = self._lay_body_tu_detail(detail)
         if not body:
+            _LOGGER.warning(
+                "npc detail: id=%s tra ve khong co body (detail type=%s), bo qua",
+                notif_id, type(detail).__name__,
+            )
             return None
-        text = re.sub(r"<[^>]*>", "", body)
-        return self._parse_outage_notification(text)
+        text = self._html_sang_text(body)
+        record = self._parse_outage_notification(text)
+        if record:
+            _LOGGER.warning(
+                "npc detail: id=%s parse OK ngay=%s tu %s den %s",
+                notif_id,
+                record["NGAY_BAT_DAU"],
+                record["THOI_GIAN_BAT_DAU"],
+                record["THOI_GIAN_KET_THUC"],
+            )
+        else:
+            _LOGGER.warning(
+                "npc detail: id=%s parse FAIL (body dai %d ky tu, khong ra ngay/gio)",
+                notif_id, len(body),
+            )
+        return record
 
     @staticmethod
     def _notification_category(notif_type: str) -> str:
