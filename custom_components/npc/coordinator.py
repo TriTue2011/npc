@@ -3,6 +3,7 @@
 import html
 import logging
 import re
+import unicodedata
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 import sqlite3
@@ -586,45 +587,78 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         - Mẫu mới (từ 11/2026): "... sẽ tạm ngừng cấp điện tại địa chỉ của
           Quý khách từ 08:00 10-11-2026. Thời gian dự kiến cấp điện trở lại:
           17:00 10-11-2026 ...".
+        Dự phòng (bản 2026.11.6, vì body thật 594 ký tự của tin 07/11 parse
+        rớt hết dù app hiển thị đúng mẫu mới): ngày dạng "10/11/2026"
+        không có chữ "ngày", ngày dài "ngày 10 tháng 11 năm 2026", giờ
+        dạng "08 giờ 00", giờ kết thúc không có dấu ":" sau "trở lại".
+        Text được chuẩn hóa unicode trước (gạch ngang en-dash/em-dash và
+        hai chấm fullwidth về ASCII) vì các ký tự đó trông giống "-" / ":"
+        nhưng regex ASCII không khớp.
         Trả về dict theo standard format của _save_outage_data, hoặc None nếu
         thiếu ngày/giờ (không dựng được lịch).
         """
         if not summary:
             return None
+        summary = self._chuan_hoa_text(summary)
 
-        # Ngày: mẫu cũ "ngày 28/8/2026", mẫu mới "10-11-2026".
-        date_m = re.search(r"ngày\s+(\d{1,2})/(\d{1,2})/(\d{4})", summary)
-        if date_m:
-            d, m, y = date_m.group(1), date_m.group(2), date_m.group(3)
-        else:
-            date_m = re.search(r"(\d{1,2})-(\d{1,2})-(\d{4})", summary)
-            if not date_m:
-                return None
-            d, m, y = date_m.group(1), date_m.group(2), date_m.group(3)
+        # Ngày: thử lần lượt các mẫu (cũ -> mới -> dự phòng).
+        date_m = None
+        for pat in (
+            r"ngày\s+(\d{1,2})/(\d{1,2})/(\d{4})",
+            r"(\d{1,2})-(\d{1,2})-(\d{4})",
+            r"(\d{1,2})/(\d{1,2})/(\d{4})",
+            r"ngày\s+(\d{1,2})\s+tháng\s+(\d{1,2})\s+năm\s+(\d{4})",
+        ):
+            date_m = re.search(pat, summary)
+            if date_m:
+                break
+        if not date_m:
+            return None
+        d, m, y = date_m.group(1), date_m.group(2), date_m.group(3)
 
-        # Giờ: mẫu cũ "từ 05h00 đến 11h30", mẫu mới "từ 08:00" +
-        # "cấp điện trở lại: 17:00".
-        time_m = re.search(
+        # Giờ: thử lần lượt các cặp mẫu (cũ -> mới -> "giờ").
+        # Mẫu mới linh hoạt hơn trước: dấu phân cách giờ có thể là ":" hoặc
+        # "h" (kèm khoảng trắng lẻ do bóc HTML), sau "trở lại" có thể không
+        # có dấu ":" và có thể có chữ "lúc".
+        time_pair = None
+        m_old = re.search(
             r"từ\s+(\d{1,2})h(\d{2})\s+đến\s+(\d{1,2})h(\d{2})", summary
         )
-        if time_m:
-            sh, sm, eh, em = (
-                time_m.group(1),
-                time_m.group(2),
-                time_m.group(3),
-                time_m.group(4),
-            )
+        if m_old:
+            time_pair = m_old.groups()
         else:
-            start_m = re.search(r"từ\s+(\d{1,2}):(\d{2})", summary)
-            end_m = re.search(r"cấp điện trở lại:\s*(\d{1,2}):(\d{2})", summary)
-            if not (start_m and end_m):
-                return None
-            sh, sm, eh, em = (
-                start_m.group(1),
-                start_m.group(2),
-                end_m.group(1),
-                end_m.group(2),
+            start_m = re.search(r"từ\s+(\d{1,2})\s*[:h]\s*(\d{2})", summary)
+            end_m = re.search(
+                r"cấp điện trở lại\s*:?\s*(?:lúc\s+)?"
+                r"(\d{1,2})\s*[:h]\s*(\d{2})",
+                summary,
             )
+            if start_m and end_m:
+                time_pair = (
+                    start_m.group(1),
+                    start_m.group(2),
+                    end_m.group(1),
+                    end_m.group(2),
+                )
+            else:
+                start_m = re.search(
+                    r"từ\s+(\d{1,2})\s*giờ\s*(\d{2})", summary
+                )
+                end_m = re.search(
+                    r"cấp điện trở lại\s*:?\s*(?:lúc\s+)?"
+                    r"(\d{1,2})\s*giờ\s*(\d{2})",
+                    summary,
+                )
+                if start_m and end_m:
+                    time_pair = (
+                        start_m.group(1),
+                        start_m.group(2),
+                        end_m.group(1),
+                        end_m.group(2),
+                    )
+        if not time_pair:
+            return None
+        sh, sm, eh, em = time_pair
 
         area_m = re.search(r"thuộc\s+(.+?)\s+thời điểm", summary)
         reason_m = re.search(r"để\s+(.+?)(?:\s*\.\.\.|\s*$)", summary)
@@ -684,29 +718,52 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
             )
 
     @staticmethod
-    def _lay_body_tu_detail(detail) -> str:
-        """Trích nội dung HTML từ kết quả get_notification_detail.
+    def _chuan_hoa_text(text: str) -> str:
+        """Chuẩn hóa text trước khi regex ngày/giờ đọc.
 
-        Dạng trả về chưa xác minh bằng gọi thật nên nhận hết các dạng có thể:
-        dict có "body", dict lồng "data" chứa "body", chuỗi HTML trực tiếp,
-        hoặc dict dùng khóa "content". Trả "" nếu không trích được gì.
+        Body HTML có thể dùng ký tự unicode trông giống ASCII nhưng regex
+        không khớp: gạch ngang en-dash/em-dash thay cho "-", hai chấm
+        fullwidth thay cho ":", ký tự tổ hợp thay cho ký tự dựng sẵn.
+        Chuẩn hóa hết về NFC/ASCII để regex đọc được.
         """
+        text = unicodedata.normalize("NFC", text)
+        text = re.sub(r"[‐‑‒–—−]", "-", text)
+        return text.replace("：", ":")
+
+    @staticmethod
+    def _lay_cac_text_tu_detail(detail) -> list:
+        """Liệt kê các ứng viên nội dung HTML từ kết quả get_notification_detail.
+
+        Ưu tiên `body` (chuẩn theo disassembly), rồi `data.body` lồng nhau,
+        rồi `content`. Cuối cùng thử mọi trường chuỗi khác trong dict (dài
+        nhất trước) vì chưa xác minh được `data` ngoài `body` còn trường nào.
+        Trả list các cặp (ten_truong, html). Trả [] nếu không có gì.
+        """
+        out = []
         if isinstance(detail, str):
-            return detail
+            return [("body", detail)] if detail else []
         if not isinstance(detail, dict):
-            return ""
+            return []
         body = detail.get("body")
         if isinstance(body, str) and body:
-            return body
+            out.append(("body", body))
         nested = detail.get("data")
         if isinstance(nested, dict):
-            body = nested.get("body")
-            if isinstance(body, str) and body:
-                return body
+            body2 = nested.get("body")
+            if isinstance(body2, str) and body2:
+                out.append(("data.body", body2))
         content = detail.get("content")
         if isinstance(content, str) and content:
-            return content
-        return ""
+            out.append(("content", content))
+        da_co = {ten for ten, _ in out}
+        khac = [
+            (k, v)
+            for k, v in detail.items()
+            if isinstance(v, str) and v and k not in da_co
+        ]
+        khac.sort(key=lambda kv: len(kv[1]), reverse=True)
+        out.extend(khac)
+        return out
 
     @staticmethod
     def _html_sang_text(body: str) -> str:
@@ -717,9 +774,12 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         không khớp), và giữ nguyên thực thể &nbsp; (cũng không phải khoảng
         trắng với regex). Sửa: thẻ khối -> khoảng trắng, thẻ nội tuyến ->
         xóa, unescape thực thể rồi gộp khoảng trắng.
+        Bản 2026.11.6: thêm ô bảng (td/th/thead/tbody/tfoot) vào thẻ khối
+        vì "<td>Từ</td><td>08:00</td>" cũng dính thành "Từ08:00" nếu không.
         """
         text = re.sub(
-            r"</?(?:br|p|div|li|ul|ol|tr|table|h[1-6]|section|article)[^>]*>",
+            r"</?(?:br|p|div|li|ul|ol|tr|td|th|thead|tbody|tfoot|table|h[1-6]"
+            r"|section|article)[^>]*>",
             " ",
             body,
             flags=re.IGNORECASE,
@@ -728,13 +788,60 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
         text = html.unescape(text)
         return re.sub(r"\s+", " ", text).strip()
 
+    @staticmethod
+    def _log_detail_chan_doan(notif_id, detail, body, text):
+        """Log chẩn đoán khi parse detail thất bại (WARNING để thấy trong HA).
+
+        Chỉ ghi các boolean/độ dài/tên trường, KHÔNG ghi nội dung body/text,
+        không ghi mã KH/tên/địa chỉ. Dùng để xác định body thật chứa gì và
+        nội dung đầy đủ nằm ở trường nào.
+        """
+        _LOGGER.warning(
+            "npc detail chan doan: id=%s dai_body=%d dai_text=%d so_tu=%d "
+            "tu=%s cap_dien=%s ngay=%s date_dash=%s date_slash=%s "
+            "time_colon=%s time_h=%s",
+            notif_id,
+            len(body),
+            len(text),
+            len(text.split()),
+            "từ" in text,
+            "cấp điện trở lại" in text,
+            "ngày" in text,
+            re.search(r"\d{1,2}-\d{1,2}-\d{4}", text) is not None,
+            re.search(r"\d{1,2}/\d{1,2}/\d{4}", text) is not None,
+            re.search(r"\d{1,2}:\d{2}", text) is not None,
+            re.search(r"\d{1,2}h\d{2}", text) is not None,
+        )
+        # Nếu body không có ngày/giờ mà dict detail có trường chuỗi khác
+        # dài hơn body thì ghi tên + độ dài trường đó (không ghi nội dung).
+        if isinstance(detail, dict):
+            dai_nhat = None
+            for k, v in detail.items():
+                if k == "body" or not isinstance(v, str) or not v:
+                    continue
+                if len(v) > len(body) and (
+                    dai_nhat is None or len(v) > len(dai_nhat[1])
+                ):
+                    dai_nhat = (k, v)
+            if dai_nhat:
+                k, v = dai_nhat
+                co_ngay = re.search(r"\d{1,2}[-/]\d{1,2}[-/]\d{4}", v)
+                _LOGGER.warning(
+                    "npc detail chan doan: id=%s truong_khac=%s dai=%d "
+                    "co_ngay=%s",
+                    notif_id,
+                    k,
+                    len(v),
+                    co_ngay is not None,
+                )
+
     async def _parse_notification_detail(self, note: dict) -> Optional[Dict]:
         """Lấy nội dung đầy đủ của một tin qua endpoint detail rồi parse.
 
-        Chỉ dùng khi parse summary thất bại. Mọi lỗi đều trả None để không
-        làm hỏng cả đợt cập nhật; mỗi điểm dừng đều ghi log WARNING để thấy
-        được trong log HA mặc định (chẩn đoán bản 2026.11.5). Không ghi nội
-        dung tin/body vào log, chỉ ghi id tin, ngày/giờ cắt điện và độ dài.
+        Chỉ dùng khi parse summary thất bại. Thử lần lượt các trường nội
+        dung trong kết quả detail (ưu tiên body). Mọi lỗi đều trả None để
+        không làm hỏng cả đợt cập nhật; khi parse rớt hết thì ghi log chẩn
+        đoán WARNING (chỉ boolean/độ dài/tên trường, không ghi nội dung tin).
         """
         notif_id = note.get("id")
         if notif_id is None:
@@ -748,29 +855,35 @@ class EVNDataUpdateCoordinator(DataUpdateCoordinator):
                 notif_id, type(exc).__name__,
             )
             return None
-        body = self._lay_body_tu_detail(detail)
-        if not body:
+        ung_vien = self._lay_cac_text_tu_detail(detail)
+        if not ung_vien:
             _LOGGER.warning(
                 "npc detail: id=%s tra ve khong co body (detail type=%s), bo qua",
                 notif_id, type(detail).__name__,
             )
             return None
-        text = self._html_sang_text(body)
-        record = self._parse_outage_notification(text)
-        if record:
-            _LOGGER.warning(
-                "npc detail: id=%s parse OK ngay=%s tu %s den %s",
-                notif_id,
-                record["NGAY_BAT_DAU"],
-                record["THOI_GIAN_BAT_DAU"],
-                record["THOI_GIAN_KET_THUC"],
-            )
-        else:
-            _LOGGER.warning(
-                "npc detail: id=%s parse FAIL (body dai %d ky tu, khong ra ngay/gio)",
-                notif_id, len(body),
-            )
-        return record
+        for ten_truong, body in ung_vien:
+            text = self._html_sang_text(body)
+            record = self._parse_outage_notification(text)
+            if record:
+                _LOGGER.warning(
+                    "npc detail: id=%s parse OK ngay=%s tu %s den %s (truong %s)",
+                    notif_id,
+                    record["NGAY_BAT_DAU"],
+                    record["THOI_GIAN_BAT_DAU"],
+                    record["THOI_GIAN_KET_THUC"],
+                    ten_truong,
+                )
+                return record
+        # Rớt hết: log chẩn đoán trên ứng viên đầu (body) để biết nó chứa gì.
+        ten0, body0 = ung_vien[0]
+        text0 = self._html_sang_text(body0)
+        _LOGGER.warning(
+            "npc detail: id=%s parse FAIL (body dai %d ky tu, khong ra ngay/gio)",
+            notif_id, len(body0),
+        )
+        self._log_detail_chan_doan(notif_id, detail, body0, text0)
+        return None
 
     @staticmethod
     def _notification_category(notif_type: str) -> str:
