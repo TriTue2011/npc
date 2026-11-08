@@ -46,6 +46,33 @@ def _khoa_sap_xep_lich(event):
     return (ngay, _parse_gio_bat_dau(event.get("Thời gian từ")))
 
 
+def _dinh_dang_state_lich_cat_dien(future_events):
+    """Định dạng state sensor lịch cắt điện: liệt kê mọi đợt cắt trong
+    cùng ngày với đợt gần nhất.
+
+    future_events đã sắp theo (ngày, giờ bắt đầu). Một đợt -> giữ nguyên
+    dạng cũ «Có (DD-MM-YYYY HH:MM - HH:MM)». Nhiều đợt cùng ngày ->
+    ngày chỉ ghi một lần, các khung giờ nối bằng «, »:
+    «Có (13-11-2026 06:00 - 08:00, 15:00 - 17:00)». Các đợt ở ngày
+    khác không đưa vào state (vẫn nằm trong thuộc tính Tương Lai).
+    Đợt thiếu giờ bắt đầu/kết thúc thì bỏ qua để state không bị vỡ.
+    """
+    if not future_events:
+        return "Không có lịch cắt điện"
+    ngay = (future_events[0].get("Ngày") or "").strip()
+    khung_gio = []
+    for event in future_events:
+        if (event.get("Ngày") or "").strip() != ngay:
+            continue
+        tu = (event.get("Thời gian từ") or "").strip()
+        den = (event.get("Thời gian đến") or "").strip()
+        if tu and den:
+            khung_gio.append(f"{tu} - {den}")
+    if not khung_gio:
+        return "Không có lịch cắt điện"
+    return f"Có ({ngay} {', '.join(khung_gio)})"
+
+
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up EVN VN sensors from a config entry."""
     customer_id = config_entry.data[CONF_CUSTOMER_ID]
@@ -731,11 +758,10 @@ class EVNSensor(CoordinatorEntity, SensorEntity):
                         "Khu vực": earliest_event["Khu vực"],
                         "Lý do": earliest_event["Lý do"],
                     })
-                    return (
-                        f"Có ({earliest_event['Ngày']} "
-                        f"{earliest_event['Thời gian từ']} - "
-                        f"{earliest_event['Thời gian đến']})"
-                    )
+                    # State liệt kê mọi đợt trong cùng ngày với đợt sớm
+                    # nhất để người xem biết hết trong 1 ngày; các đợt
+                    # ở ngày khác vẫn nằm trong thuộc tính Tương Lai.
+                    return _dinh_dang_state_lich_cat_dien(future_events)
                 else:
                     self._attributes = {
                         "Tương Lai": [],
